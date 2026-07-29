@@ -15,6 +15,7 @@ entrypoint.sh checks for the marker before registering and exits DRAIN_EXIT.
 The unit carries RestartPreventExitStatus=78, so Restart=always declines.
 """
 
+from . import state
 from .conf import Instance
 
 
@@ -29,7 +30,10 @@ def mark(inst: Instance) -> bool:
 
     if is_draining(inst):
         return False
-    inst.state_dir.mkdir(parents=True, exist_ok=True)
+    # Not a bare mkdir: this has to end up owned by the service
+    # account and labelled, or the container gets a directory it
+    # cannot write to.
+    state.ensure(inst)
     inst.drain_marker.write_text(
         "Created by gh-runner-ctl disable.\n"
         "Remove this file, or run `gh-runner-ctl enable`, to resume.\n"

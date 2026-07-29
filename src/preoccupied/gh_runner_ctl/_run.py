@@ -17,6 +17,7 @@ from typing import Any
 from . import SERVICE_USER, CtlError
 
 _uid_cache: int | None = None
+_gid_cache: int | None = None
 
 
 def service_uid() -> int:
@@ -30,6 +31,19 @@ def service_uid() -> int:
                 "is the gh-runner package installed?"
             ) from None
     return _uid_cache
+
+
+def service_gid() -> int:
+    global _gid_cache
+    if _gid_cache is None:
+        try:
+            _gid_cache = pwd.getpwnam(SERVICE_USER).pw_gid
+        except KeyError:
+            raise CtlError(
+                f"service account {SERVICE_USER!r} does not exist; "
+                "is the gh-runner package installed?"
+            ) from None
+    return _gid_cache
 
 
 def _user_env() -> dict[str, str]:

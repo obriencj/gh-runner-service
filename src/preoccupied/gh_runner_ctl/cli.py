@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 from . import INSTANCES_DIR, __version__, CtlError
-from . import conf, doctor, drain, secret, units
+from . import conf, doctor, drain, secret, state, units
 
 
 def _print_kv(title: str, values: dict[str, str], note: str = "") -> None:
@@ -124,9 +124,7 @@ def cmd_rm(args) -> int:
     units.reload()
 
     if args.purge:
-        import shutil
-
-        shutil.rmtree(inst.state_dir, ignore_errors=True)
+        state.remove(inst)
         print(f"removed {inst.path} and {inst.state_dir}")
     else:
         print(f"removed {inst.path}; state kept at {inst.state_dir}")
@@ -147,6 +145,8 @@ def cmd_enable(args) -> int:
         )
     if not secret.secret_exists(inst.iid):
         secret.sync(inst.iid)
+    # Before the unit starts: podman refuses to create a bind-mount source.
+    state.ensure(inst)
     drain.clear(inst)
     units.sync_dropin(inst)
     units.reload()
@@ -218,6 +218,8 @@ def cmd_sync(args) -> int:
 
     instances = conf.all_instances()
     for inst in instances:
+        if state.ensure(inst):
+            changed.append(f"state dir {inst.iid}")
         if units.sync_dropin(inst):
             changed.append(f"drop-in {inst.iid}")
 
