@@ -28,11 +28,13 @@ def _print_kv(title: str, values: dict[str, str], note: str = "") -> None:
         print(f"    {k}={v}")
 
 
-def _read_token(iid: str, from_stdin: bool) -> str:
+def _read_token(iid: str, from_stdin: bool, token: str | None = None) -> str:
     """
-    Never from argv. A PAT on a command line lands in shell history and in
-    every `ps` on the box for the duration of the call.
+    --token wins, then --token-stdin, then an interactive prompt.
     """
+
+    if token:
+        return token
 
     if from_stdin:
         return sys.stdin.read()
@@ -58,7 +60,8 @@ def cmd_add(args) -> int:
     # and reporting success is how the previous version sent people to `enable`
     # only to be told about a command they had never heard of.
     if not args.no_token:
-        secret.write_credential(args.id, _read_token(args.id, args.token_stdin))
+        secret.write_credential(
+            args.id, _read_token(args.id, args.token_stdin, args.token))
 
     INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -262,7 +265,7 @@ def cmd_set_credential(args) -> int:
         print(f"warning: no conf file for {args.id} yet "
               f"({conf.instance_path(args.id)})", file=sys.stderr)
 
-    secret.write_credential(args.id, _read_token(args.id, args.stdin))
+    secret.write_credential(args.id, _read_token(args.id, args.stdin, args.token))
     secret.sync(args.id)
     print(f"wrote {secret.credential_path(args.id)} (0600)")
     print(f"loaded podman secret {secret.secret_name(args.id)}")
@@ -327,9 +330,9 @@ Prompts for this worker's GitHub credential, writes it to
 The credential is per worker, not per host. Each one registers against its own
 repository or organisation under its own name, so a single shared token would
 make two instances pointed at different orgs impossible -- which is the whole
-reason instances exist. It is never accepted on the command line: a PAT in argv
-lands in shell history and in every `ps` for the duration of the call. Use
---token-stdin for automation.
+reason instances exist. --token accepts it inline, --token-stdin reads it from stdin, and with
+neither it prompts. Inline is visible in shell history and in `ps` while the
+command runs, so prefer stdin for automation.
 
 Activation is still a separate step, so configuration management and
 activation stay separable.
@@ -405,6 +408,9 @@ Podman secret that instance's container mounts, gh-runner-token-<id>.
 One credential per worker. Use this to set a token for an instance scaffolded
 with `add --no-token`, or to rotate one -- the running container keeps the old
 value until its next job boundary, which needs no special handling.
+
+--token accepts it inline, --stdin reads it from stdin, and with neither it
+prompts.
 
 What to supply: a fine-grained PAT with administration:write on the target, or
 a GitHub App private key. Never a classic `repo` PAT, and not a registration
@@ -502,6 +508,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--url", required=True, help="repository or organisation URL")
     p.add_argument("--labels", default="alma10,podman", help="comma-separated")
     p.add_argument("--name", help="runner name (default <hostname>-<id>)")
+    p.add_argument("--token", metavar="TOKEN",
+                   help="the credential, inline (visible in ps and shell history)")
     p.add_argument("--token-stdin", action="store_true",
                    help="read the credential from stdin instead of prompting")
     p.add_argument("--no-token", action="store_true",
@@ -631,6 +639,8 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=fmt,
     )
     p.add_argument("id", help="instance the credential belongs to")
+    p.add_argument("--token", metavar="TOKEN",
+                   help="the credential, inline (visible in ps and shell history)")
     p.add_argument("--stdin", action="store_true", help="read from stdin, not a prompt")
     p.set_defaults(func=cmd_set_credential)
 
