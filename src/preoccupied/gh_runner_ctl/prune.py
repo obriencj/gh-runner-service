@@ -23,7 +23,7 @@ from pathlib import Path
 from . import STATE_ROOT, CtlError
 from ._run import podman, podman_json
 
-JOB_LABEL = "io.preoccupied.gh-runner.role=job"
+JOB_LABEL = "net.preoccupied.gh-runner.role=job"
 
 DEFAULT_MAX_AGE = "2h"
 DEFAULT_DIAG_AGE = "14d"
@@ -109,7 +109,7 @@ why positive selection:
   Reaping "everything that is not role=runner" would also reap anything
   else the service account owns, and would race a job container between
   create and start. Only objects labelled
-  io.preoccupied.gh-runner.role=job -- stamped by the docker shim at
+  net.preoccupied.gh-runner.role=job -- stamped by the docker shim at
   creation -- are touched, and the age floor covers the creation race.
 
 durations:

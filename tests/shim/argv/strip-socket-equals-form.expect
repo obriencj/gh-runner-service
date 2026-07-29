@@ -1,6 +1,6 @@
 create
 --label
-io.preoccupied.gh-runner.role=job
+net.preoccupied.gh-runner.role=job
 --label
-io.preoccupied.gh-runner.id=01
+net.preoccupied.gh-runner.id=01
 ubuntu:24.04

@@ -418,8 +418,8 @@ Shim behaviour, in order:
 1. Drop the `docker.sock` `-v` pair. A build-time flag switches this to
    *rewrite* the mount instead, for workflows that genuinely need socket access
    inside the job container. Default is drop.
-2. On `create` / `run`, inject `--label io.preoccupied.gh-runner.role=job` and
-   `--label io.preoccupied.gh-runner.id=$RUNNER_ID`, so §8's pruner can
+2. On `create` / `run`, inject `--label net.preoccupied.gh-runner.role=job` and
+   `--label net.preoccupied.gh-runner.id=$RUNNER_ID`, so §8's pruner can
    identify what it owns rather than reaping by exclusion.
 3. On `create` / `run`, inject `--memory=$JOB_MEMORY_MAX` and
    `--cpus=$JOB_CPUS` when those are set (§7). This is the only point at which
@@ -744,8 +744,8 @@ Volume=/var/lib/gh-runner/%i:/var/lib/gh-runner/%i
 Volume=/usr/lib/gh-runner/current:/usr/lib/gh-runner/current:ro
 Volume=%t/podman/podman.sock:/var/run/docker.sock
 Secret=gh-runner-token,type=mount,target=/run/secrets/gh-token
-Label=io.preoccupied.gh-runner.role=runner
-Label=io.preoccupied.gh-runner.id=%i
+Label=net.preoccupied.gh-runner.role=runner
+Label=net.preoccupied.gh-runner.id=%i
 
 [Service]
 Restart=always
@@ -788,7 +788,7 @@ retrying and be visible in `ctl status` as retrying.
 Ordinary user units in `/usr/lib/systemd/user/`, not Quadlet files (§3).
 
 Every 30 minutes, calling `gh-runner-prune`. It reaps containers, networks, and
-volumes carrying `io.preoccupied.gh-runner.role=job` — the label the shim
+volumes carrying `net.preoccupied.gh-runner.role=job` — the label the shim
 stamps on creation (§6) — that have been stopped longer than
 `PRUNE_MAX_AGE` (default `2h`), plus dangling images and `_diag` files older
 than `DIAG_MAX_AGE` (default `14d`).

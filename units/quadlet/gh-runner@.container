@@ -30,8 +30,8 @@ Volume=%t/podman/podman.sock:/var/run/docker.sock
 
 Secret=gh-runner-token-%i,type=mount,target=/run/secrets/gh-token
 
-Label=io.preoccupied.gh-runner.role=runner
-Label=io.preoccupied.gh-runner.id=%i
+Label=net.preoccupied.gh-runner.role=runner
+Label=net.preoccupied.gh-runner.id=%i
 
 # No PodmanArgs=--rm. Quadlet already emits --replace --rm in the generated
 # ExecStart, and --replace is load-bearing: an unclean exit leaves a named

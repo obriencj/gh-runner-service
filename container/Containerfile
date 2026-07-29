@@ -34,6 +34,6 @@ RUN chmod 0755 /usr/local/bin/docker \
                 /usr/local/bin/entrypoint.sh \
                 /usr/local/bin/register.sh
 
-LABEL io.preoccupied.gh-runner.role=image
+LABEL net.preoccupied.gh-runner.role=image
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

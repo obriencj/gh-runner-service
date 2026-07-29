@@ -119,9 +119,9 @@ fi
 inject=()
 case "$group:$action" in
     ":create"|":run"|"container:create"|"container:run"|"network:create"|"volume:create")
-        inject+=(--label "io.preoccupied.gh-runner.role=job")
+        inject+=(--label "net.preoccupied.gh-runner.role=job")
         if [[ -n ${RUNNER_ID:-} ]]; then
-            inject+=(--label "io.preoccupied.gh-runner.id=${RUNNER_ID}")
+            inject+=(--label "net.preoccupied.gh-runner.id=${RUNNER_ID}")
         fi
         ;;
 esac

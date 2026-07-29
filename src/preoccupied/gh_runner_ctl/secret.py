@@ -32,7 +32,7 @@ from . import CREDENTIALS_DIR, SECRET_PREFIX, CtlError
 from ._run import podman, podman_json
 
 
-_LABEL = "io.preoccupied.gh-runner.digest"
+_LABEL = "net.preoccupied.gh-runner.digest"
 
 
 def credential_path(iid: str) -> Path:
