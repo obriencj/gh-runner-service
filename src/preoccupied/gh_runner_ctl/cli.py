@@ -170,11 +170,48 @@ def cmd_disable(args) -> int:
     return 0
 
 
+def cmd_start(args) -> int:
+    if args.id:
+        inst = conf.load(args.id)
+        units.start(inst)
+        print(f"started {inst.unit}")
+    else:
+        units.start_all()
+        print(f"started {units.TARGET} (every enabled instance)")
+    return 0
+
+
+def cmd_stop(args) -> int:
+    if args.id:
+        inst = conf.load(args.id)
+        units.stop(inst)
+        print(f"stopped {inst.unit} (any running job was killed)")
+    else:
+        units.stop_all()
+        print(f"stopped {units.TARGET} (all instances, running jobs killed)")
+    print("to stop at a job boundary instead: gh-runner-ctl disable")
+    return 0
+
+
+def cmd_restart(args) -> int:
+    if args.id:
+        inst = conf.load(args.id)
+        units.restart(inst)
+        print(f"restarted {inst.unit}")
+    else:
+        units.restart_all()
+        print(f"restarted {units.TARGET}")
+    return 0
+
+
 def cmd_sync(args) -> int:
     changed = []
 
     if units.sync_quadlet_links():
         changed.append("quadlet symlinks")
+
+    for name in units.migrate_wants():
+        changed.append(f"moved {name} into {units.WANTS_DIR}")
 
     instances = conf.all_instances()
     for inst in instances:
@@ -315,6 +352,11 @@ security:
   Podman socket, so anything running inside it can drive every container
   on the box. The VM is the boundary -- do not attach these runners to
   public repositories. All instances share one uid and one Podman store.
+
+the whole set at once:
+  gh-runner-ctl start / stop / restart      with no id, acts on all
+  systemctl --user start gh-runner.target   the same thing, directly
+  systemctl --user stop gh-runner.target
 
 see also:
   gh-runner-ctl keys          what each config key does and where it goes
@@ -583,6 +625,40 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true", help="every configured instance")
     p.add_argument("--now", action="store_true", help="stop now, killing any job")
     p.set_defaults(func=cmd_disable)
+
+    p = sub.add_parser(
+        "start",
+        help="start one instance, or every enabled one",
+        description=(
+            "With no id, starts gh-runner.target, which pulls in every enabled "
+            "instance."
+        ),
+        formatter_class=fmt,
+    )
+    p.add_argument("id", nargs="?")
+    p.set_defaults(func=cmd_start)
+
+    p = sub.add_parser(
+        "stop",
+        help="stop one instance, or all of them, killing jobs",
+        description=(
+            "With no id, stops gh-runner.target. Every instance declares "
+            "PartOf=gh-runner.target, so stop propagates to all of them.\n\n"
+            "This kills running jobs. `disable` is the graceful path: it lets "
+            "the current job finish and then declines to restart."
+        ),
+        formatter_class=fmt,
+    )
+    p.add_argument("id", nargs="?")
+    p.set_defaults(func=cmd_stop)
+
+    p = sub.add_parser(
+        "restart",
+        help="restart one instance, or all of them",
+        formatter_class=fmt,
+    )
+    p.add_argument("id", nargs="?")
+    p.set_defaults(func=cmd_restart)
 
     p = sub.add_parser(
         "sync",

@@ -59,15 +59,14 @@ class TestEnable:
         conf, units = env
         inst = conf.load("01")
         units.enable(inst, now=False)
-        link = units.SYSTEMD_USER_DIR / "default.target.wants" / "gh-runner@01.service"
+        link = units.SYSTEMD_USER_DIR / "gh-runner.target.wants" / "gh-runner@01.service"
         assert link.is_symlink()
 
     def test_link_targets_the_template_fragment(self, env):
         conf, units = env
         inst = conf.load("01")
         units.enable(inst, now=False)
-        link = units.SYSTEMD_USER_DIR / "default.target.wants" / inst.unit
-        assert str(link.readlink()) == FRAGMENT
+        assert str(units._wants_link(inst).readlink()) == FRAGMENT
 
     def test_idempotent(self, env):
         conf, units = env
@@ -86,6 +85,44 @@ class TestEnable:
         )
         with pytest.raises(CtlError, match="Quadlet has not generated"):
             units.enable(conf.load("01"), now=False)
+
+
+class TestTargetWants:
+    def test_links_go_under_the_aggregate_target(self, env):
+        """
+        Not default.target.wants. Instances have to be under the target for
+        `systemctl stop gh-runner.target` to reach them, which it does via
+        PartOf= in the .container.
+        """
+        conf, units = env
+        units.enable(conf.load("01"), now=False)
+        assert (units.SYSTEMD_USER_DIR / "gh-runner.target.wants").is_dir()
+        assert not (units.SYSTEMD_USER_DIR / "default.target.wants").exists()
+
+    def test_migrates_links_from_the_old_location(self, env):
+        conf, units = env
+        old = units.SYSTEMD_USER_DIR / "default.target.wants"
+        old.mkdir(parents=True)
+        (old / "gh-runner@01.service").symlink_to(FRAGMENT)
+
+        moved = units.migrate_wants()
+
+        assert moved == ["gh-runner@01.service"]
+        assert units.is_enabled(conf.load("01"))
+        assert not (old / "gh-runner@01.service").exists()
+
+    def test_migration_leaves_other_units_alone(self, env):
+        conf, units = env
+        old = units.SYSTEMD_USER_DIR / "default.target.wants"
+        old.mkdir(parents=True)
+        (old / "something-else.service").symlink_to("/dev/null")
+
+        assert units.migrate_wants() == []
+        assert (old / "something-else.service").is_symlink()
+
+    def test_migration_is_a_noop_without_the_old_dir(self, env):
+        conf, units = env
+        assert units.migrate_wants() == []
 
 
 class TestDisable:

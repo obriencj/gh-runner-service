@@ -7,6 +7,12 @@ Description=GitHub Actions Runner (%i)
 Requires=podman.socket
 After=podman.socket
 
+# Stop and restart propagate from the aggregate target. A target does not stop
+# the units it Wants, only those declaring themselves part of it, so without
+# this `systemctl stop gh-runner.target` would leave every runner running.
+PartOf=gh-runner.target
+After=gh-runner.target
+
 [Container]
 Image=gh-runner.build
 ContainerName=gh-runner-%i
@@ -52,5 +58,7 @@ RestartPreventExitStatus=78
 # ended is worse than one that keeps retrying visibly.
 StartLimitIntervalSec=0
 
-[Install]
-WantedBy=default.target
+# No [Install]. WantedBy= in a template instantiates nothing without a
+# DefaultInstance, so this section only ever looked like it was doing
+# something. `gh-runner-ctl enable <id>` writes the per-instance
+# gh-runner.target.wants symlink instead.

@@ -128,7 +128,8 @@ def prune_orphan_dropins(known: set[str]) -> bool:
     return changed
 
 
-WANTS_DIR = "default.target.wants"
+TARGET = "gh-runner.target"
+WANTS_DIR = f"{TARGET}.wants"
 
 
 def _wants_link(inst: Instance) -> Path:
@@ -154,6 +155,54 @@ def fragment_path(inst: Instance) -> str | None:
 
 def is_enabled(inst: Instance) -> bool:
     return _wants_link(inst).is_symlink()
+
+
+def migrate_wants() -> list[str]:
+    """
+    Move instance links from default.target.wants to gh-runner.target.wants.
+
+    Earlier builds linked instances straight into default.target, which starts
+    them at boot but leaves them outside the aggregate target -- so
+    `systemctl stop gh-runner.target` would silently miss them.
+    """
+
+    moved = []
+    old = SYSTEMD_USER_DIR / "default.target.wants"
+    if not old.is_dir():
+        return moved
+
+    new = SYSTEMD_USER_DIR / WANTS_DIR
+    for link in sorted(old.glob("gh-runner@*.service")):
+        new.mkdir(parents=True, exist_ok=True)
+        target = link.readlink() if link.is_symlink() else None
+        link.unlink()
+        if target is not None:
+            dest = new / link.name
+            if dest.is_symlink() or dest.exists():
+                dest.unlink()
+            dest.symlink_to(target)
+        moved.append(link.name)
+    return moved
+
+
+def start_all() -> None:
+    systemctl("start", TARGET)
+
+
+def stop_all() -> None:
+    systemctl("stop", TARGET)
+
+
+def restart_all() -> None:
+    systemctl("restart", TARGET)
+
+
+def start(inst: Instance) -> None:
+    systemctl("start", inst.unit)
+
+
+def stop(inst: Instance) -> None:
+    systemctl("stop", inst.unit, check=False)
 
 
 def enable(inst: Instance, now: bool = True) -> None:

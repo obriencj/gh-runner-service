@@ -72,7 +72,7 @@
 
 Name:           gh-runner
 Version:        0.1.0
-Release:        6%{?dist}
+Release:        7%{?dist}
 Summary:        Rootless, ephemeral GitHub Actions self-hosted runners
 
 # Our own files are GPLv3; the bundled upstream runner is MIT.
@@ -309,6 +309,7 @@ if [ $1 -eq 0 ]; then
         # install's `doctor` output actively misleading.
         rm -rf %{_sysconfdir}/containers/systemd/users/${uid}
         rm -rf %{_sysconfdir}/systemd/user/gh-runner@*.service.d
+        rm -rf %{_sysconfdir}/systemd/user/gh-runner.target.wants
 
         runuser -u %{service_user} -- \
             env XDG_RUNTIME_DIR=/run/user/${uid} \
@@ -346,6 +347,7 @@ exit 0
 %{_prefix}/lib/%{name}/%{runner_version}/
 %{_prefix}/lib/%{name}/current
 
+%{_userunitdir}/gh-runner.target
 %{_userunitdir}/gh-runner-prune.service
 %{_userunitdir}/gh-runner-prune.timer
 %{_userunitdir}/gh-runner-image-refresh.service

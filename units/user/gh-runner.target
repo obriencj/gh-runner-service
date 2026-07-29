@@ -1,0 +1,20 @@
+[Unit]
+Description=GitHub Actions runners
+Documentation=https://github.com/obriencj/gh-runner-service
+
+# One handle for the whole set:
+#
+#     systemctl --user start gh-runner.target      every enabled instance
+#     systemctl --user stop gh-runner.target       all of them, jobs included
+#     systemctl --user restart gh-runner.target
+#
+# `gh-runner-ctl enable <id>` links instances into gh-runner.target.wants/,
+# which is what gives start propagation. Stop propagation comes from
+# PartOf=gh-runner.target in gh-runner@.container -- a target does NOT stop
+# the units it merely Wants.
+#
+# The maintenance timers are deliberately not part of this. Pruning and
+# version checks should keep working while the runners are stopped.
+
+[Install]
+WantedBy=default.target
