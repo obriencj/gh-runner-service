@@ -16,7 +16,10 @@ from pathlib import Path
 __version__ = "0.1.0"
 
 SERVICE_USER = "gh-runner"
-SECRET_NAME = "gh-runner-token"
+
+#: Credentials are per instance, so the secret name is too. Each worker
+#: registers against its own repo or org and needs its own token.
+SECRET_PREFIX = "gh-runner-token"
 
 #: entrypoint.sh exits with this when it finds a drain marker;
 #: the unit carries RestartPreventExitStatus=78. See design §7.3.
@@ -34,7 +37,9 @@ def _p(*parts: str) -> Path:
 CONF_DIR = _p("etc/gh-runner")
 GLOBAL_CONF = CONF_DIR / "gh-runner.conf"
 INSTANCES_DIR = CONF_DIR / "instances.d"
-CREDENTIALS = CONF_DIR / "credentials"
+#: One file per instance, named for the instance id. 0700 on the directory:
+#: only root reads these, and only to hand them to `podman secret create`.
+CREDENTIALS_DIR = CONF_DIR / "credentials.d"
 
 STATE_ROOT = _p("var/lib/gh-runner")
 RUNNER_TEMPLATE = _p("usr/lib/gh-runner/current")

@@ -7,6 +7,12 @@
 # state directory (/var/lib/gh-runner/01/), and the default runner name
 # (<hostname>-01).
 #
+# The GitHub credential for this worker is NOT in this file. Each worker
+# registers against its own repo or org under its own name and needs its own
+# token, which lives in /etc/gh-runner/credentials.d/<id> at mode 0600:
+#
+#     gh-runner-ctl set-credential 01
+#
 # Dropping a file here does not start a runner. Activation is a separate
 # step, so config management and activation stay separable:
 #

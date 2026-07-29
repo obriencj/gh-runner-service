@@ -28,7 +28,7 @@ Volume=/var/lib/gh-runner/%i:/var/lib/gh-runner/%i
 Volume=/usr/lib/gh-runner/current:/usr/lib/gh-runner/current:ro
 Volume=%t/podman/podman.sock:/var/run/docker.sock
 
-Secret=gh-runner-token,type=mount,target=/run/secrets/gh-token
+Secret=gh-runner-token-%i,type=mount,target=/run/secrets/gh-token
 
 Label=io.preoccupied.gh-runner.role=runner
 Label=io.preoccupied.gh-runner.id=%i

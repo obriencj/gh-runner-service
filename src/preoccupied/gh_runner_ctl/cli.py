@@ -28,18 +28,51 @@ def _print_kv(title: str, values: dict[str, str], note: str = "") -> None:
         print(f"    {k}={v}")
 
 
+def _read_token(iid: str, from_stdin: bool) -> str:
+    """
+    Never from argv. A PAT on a command line lands in shell history and in
+    every `ps` on the box for the duration of the call.
+    """
+
+    if from_stdin:
+        return sys.stdin.read()
+
+    import getpass
+
+    print(f"Credential for instance {iid}.")
+    print("A fine-grained PAT with administration:write on the target, or an")
+    print("App private key. Not a registration token — those expire in an hour")
+    print("and an ephemeral runner re-registers on every job.")
+    return getpass.getpass("token: ")
+
+
 def cmd_add(args) -> int:
     if not conf.valid_instance_id(args.id):
         raise CtlError(f"invalid instance id: {args.id!r}")
+
     path = conf.instance_path(args.id)
     if path.exists() and not args.force:
         raise CtlError(f"{path} exists (use --force to overwrite)")
+
+    # The credential first. Scaffolding a worker that cannot possibly register
+    # and reporting success is how the previous version sent people to `enable`
+    # only to be told about a command they had never heard of.
+    if not args.no_token:
+        secret.write_credential(args.id, _read_token(args.id, args.token_stdin))
+
     INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(
         conf.scaffold(args.id, args.url, args.labels, args.name, args.group)
     )
     print(f"wrote {path}")
-    print(f"next: gh-runner-ctl enable {args.id}")
+
+    if args.no_token:
+        print(f"no credential set. before enabling:")
+        print(f"  gh-runner-ctl set-credential {args.id}")
+    else:
+        secret.sync(args.id)
+        print(f"wrote {secret.credential_path(args.id)} (0600)")
+        print(f"next: gh-runner-ctl enable {args.id}")
     return 0
 
 
@@ -51,6 +84,9 @@ def cmd_show(args) -> int:
     print(f"  container      {inst.container_name}")
     print(f"  state dir      {inst.state_dir}")
     print(f"  draining       {'yes' if drain.is_draining(inst) else 'no'}")
+    cred = "present" if secret.has_credential(inst.iid) else "MISSING"
+    sec = "loaded" if secret.secret_exists(inst.iid) else "not loaded"
+    print(f"  credential     {cred} ({inst.credential_path}), secret {sec}")
     print()
     _print_kv("runtime env", groups["runtime"], "next container start")
     _print_kv("job-shaping", groups["job"], "next job, applied by the shim")
@@ -78,6 +114,8 @@ def cmd_edit(args) -> int:
 def cmd_rm(args) -> int:
     inst = conf.load(args.id)
     units.disable(inst, now=True)
+    if secret.remove(inst.iid):
+        print(f"removed credential and secret for {inst.iid}")
     inst.path.unlink(missing_ok=True)
     units.prune_orphan_dropins({i.iid for i in conf.all_instances()})
     units.reload()
@@ -99,10 +137,13 @@ def cmd_enable(args) -> int:
         raise CtlError(f"{inst.path} has no RUNNER_URL")
     # Refuse rather than let the instance enter a restart loop against a
     # missing secret, which surfaces as an unrelated podman error.
-    if not secret.exists():
+    if not secret.has_credential(inst.iid):
         raise CtlError(
-            "no podman secret; run `gh-runner-ctl set-credential` then `sync`"
+            f"no credential for {inst.iid}\n"
+            f"run: gh-runner-ctl set-credential {inst.iid}"
         )
+    if not secret.secret_exists(inst.iid):
+        secret.sync(inst.iid)
     drain.clear(inst)
     units.sync_dropin(inst)
     units.reload()
@@ -140,11 +181,21 @@ def cmd_sync(args) -> int:
     if units.prune_orphan_dropins({i.iid for i in instances}):
         changed.append("orphan drop-ins")
 
-    try:
-        if secret.sync():
-            changed.append("podman secret")
-    except CtlError as exc:
-        print(f"warning: {exc}", file=sys.stderr)
+    for inst in instances:
+        try:
+            if secret.sync(inst.iid):
+                changed.append(f"secret {inst.iid}")
+        except CtlError as exc:
+            print(f"warning: {exc}", file=sys.stderr)
+
+    known = {i.iid for i in instances}
+    for name in secret.prune_orphan_secrets(known):
+        changed.append(f"orphan secret {name}")
+
+    # Reported, never deleted. Removing a token because a conf file went
+    # missing is not a recoverable mistake.
+    for name in secret.orphan_credentials(known):
+        print(f"note: credential {name} has no instance", file=sys.stderr)
 
     if changed:
         units.reload()
@@ -169,12 +220,13 @@ def cmd_list(args) -> int:
         if drain.is_draining(inst):
             active = "draining"
         pending = "yes" if units.render_dropin(inst) != _current_dropin(inst) else ""
+        cred = "yes" if secret.has_credential(inst.iid) else "NO"
         rows.append(
-            (inst.iid, enabled, active, inst.get("RUNNER_URL", "-"), pending)
+            (inst.iid, enabled, active, cred, inst.get("RUNNER_URL", "-"), pending)
         )
 
-    head = ("ID", "ENABLED", "STATE", "URL", "DRIFT")
-    widths = [max(len(r[i]) for r in (*rows, head)) for i in range(5)]
+    head = ("ID", "ENABLED", "STATE", "CRED", "URL", "DRIFT")
+    widths = [max(len(r[i]) for r in (*rows, head)) for i in range(6)]
     print("  ".join(h.ljust(w) for h, w in zip(head, widths)))
     for r in rows:
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)))
@@ -202,36 +254,57 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_set_credential(args) -> int:
-    if args.stdin:
-        value = sys.stdin.read()
-    else:
-        import getpass
+    # Validate the instance id even when no conf file exists yet, so a typo
+    # cannot quietly create a credential nothing will ever read.
+    if not conf.valid_instance_id(args.id):
+        raise CtlError(f"invalid instance id: {args.id!r}")
+    if not conf.instance_path(args.id).exists():
+        print(f"warning: no conf file for {args.id} yet "
+              f"({conf.instance_path(args.id)})", file=sys.stderr)
 
-        value = getpass.getpass("GitHub PAT or App private key path: ")
-    secret.write_credential(value)
-    secret.sync()
-    print(f"credential written and loaded into podman secret")
+    secret.write_credential(args.id, _read_token(args.id, args.stdin))
+    secret.sync(args.id)
+    print(f"wrote {secret.credential_path(args.id)} (0600)")
+    print(f"loaded podman secret {secret.secret_name(args.id)}")
     return 0
 
 
 def cmd_check_credential(args) -> int:
-    from urllib.error import HTTPError
+    targets = [conf.load(args.id)] if args.id else conf.all_instances()
+    if not targets:
+        raise CtlError("no instances configured")
 
-    urls = {i.get("RUNNER_URL") for i in conf.all_instances()} - {None}
-    if not urls:
-        raise CtlError("no instances with a RUNNER_URL to check against")
-    secret.read_credential()
-    print("credential readable; per-URL minting check is a TODO for M3")
-    for u in sorted(urls):
-        print(f"  would mint against {u}")
-    return 0
+    failed = 0
+    for inst in targets:
+        url = inst.get("RUNNER_URL") or "-"
+        if not secret.has_credential(inst.iid):
+            print(f"{inst.iid}: MISSING credential ({inst.credential_path})")
+            failed += 1
+            continue
+        try:
+            secret.read_credential(inst.iid)
+        except CtlError as exc:
+            print(f"{inst.iid}: UNREADABLE — {exc}")
+            failed += 1
+            continue
+        state = "ok" if secret.secret_exists(inst.iid) else "no podman secret (run sync)"
+        print(f"{inst.iid}: credential present, {state}  -> {url}")
+        if not secret.secret_exists(inst.iid):
+            failed += 1
+
+    # Actually minting a registration token per URL is the real check and
+    # belongs here; it needs the same repo/org inference register.sh does.
+    print()
+    print("note: this verifies presence and readability, not that the token")
+    print("      can mint for its URL. That check lands with M3.")
+    return 1 if failed else 0
 
 
 MAIN_EPILOG = """\
 files:
   /etc/gh-runner/gh-runner.conf              global defaults
   /etc/gh-runner/instances.d/<id>.conf       per-instance; the only store
-  /etc/gh-runner/credentials                 GitHub credential, mode 0600
+  /etc/gh-runner/credentials.d/<id>          per-worker GitHub token, 0600
   /var/lib/gh-runner/<id>/                   instance state, _work, _diag
 
 security:
@@ -247,9 +320,19 @@ see also:
 """
 
 ADD_EPILOG = """\
-Writes /etc/gh-runner/instances.d/<id>.conf and stops. Dropping a file does
-not start a runner: activation is a separate step, so configuration
-management and activation stay separable.
+Prompts for this worker's GitHub credential, writes it to
+/etc/gh-runner/credentials.d/<id> at mode 0600, then writes
+/etc/gh-runner/instances.d/<id>.conf and stops.
+
+The credential is per worker, not per host. Each one registers against its own
+repository or organisation under its own name, so a single shared token would
+make two instances pointed at different orgs impossible -- which is the whole
+reason instances exist. It is never accepted on the command line: a PAT in argv
+lands in shell history and in every `ps` for the duration of the call. Use
+--token-stdin for automation.
+
+Activation is still a separate step, so configuration management and
+activation stay separable.
 
     gh-runner-ctl enable <id>
 
@@ -284,7 +367,12 @@ on purpose is otherwise indistinguishable from a crash loop that gave up.
 
 SYNC_EPILOG = """\
 Reconciles every piece of derived state to the conf files: Quadlet symlinks,
-unit drop-ins, orphaned drop-ins, and the Podman secret. Idempotent.
+unit drop-ins, orphaned drop-ins, and one Podman secret per instance
+credential. Idempotent.
+
+Secrets for instances that no longer have a conf file are removed. Credential
+*files* with no instance are only reported -- deleting a token because a conf
+file went missing is not a recoverable mistake.
 
 instances.d/ is the only store. There is no database, no cache, and no
 registry file -- the drop-ins and the secret are regenerated here rather than
@@ -311,12 +399,20 @@ that is configured, reported by `systemctl show`, and not enforced.
 """
 
 CRED_EPILOG = """\
-Writes /etc/gh-runner/credentials (mode 0600) and loads it into the Podman
-secret the runner containers mount.
+Writes /etc/gh-runner/credentials.d/<id> (mode 0600) and loads it into the
+Podman secret that instance's container mounts, gh-runner-token-<id>.
 
-Scope it narrowly: administration:write on the single target repository, or a
-GitHub App. Never a classic `repo` PAT. Ephemeral registration needs a live
-credential on the box, and anything running a job can reach the Podman socket.
+One credential per worker. Use this to set a token for an instance scaffolded
+with `add --no-token`, or to rotate one -- the running container keeps the old
+value until its next job boundary, which needs no special handling.
+
+What to supply: a fine-grained PAT with administration:write on the target, or
+a GitHub App private key. Never a classic `repo` PAT, and not a registration
+token from the "add runner" page -- those expire in an hour, and an ephemeral
+runner re-registers on every single job, so it mints its own from this.
+
+Ephemeral registration means a live credential sits on the box. Anything
+running a job can reach the Podman socket, so scope it to the single target.
 """
 
 
@@ -406,6 +502,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--url", required=True, help="repository or organisation URL")
     p.add_argument("--labels", default="alma10,podman", help="comma-separated")
     p.add_argument("--name", help="runner name (default <hostname>-<id>)")
+    p.add_argument("--token-stdin", action="store_true",
+                   help="read the credential from stdin instead of prompting")
+    p.add_argument("--no-token", action="store_true",
+                   help="scaffold without a credential; set it before enabling")
     p.add_argument("--group", help="runner group")
     p.add_argument("--force", action="store_true", help="overwrite an existing file")
     p.set_defaults(func=cmd_add)
@@ -530,14 +630,16 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=CRED_EPILOG,
         formatter_class=fmt,
     )
+    p.add_argument("id", help="instance the credential belongs to")
     p.add_argument("--stdin", action="store_true", help="read from stdin, not a prompt")
     p.set_defaults(func=cmd_set_credential)
 
     p = sub.add_parser(
         "check-credential",
-        help="verify the credential can mint registration tokens",
+        help="check each instance has a usable credential",
         formatter_class=fmt,
     )
+    p.add_argument("id", nargs="?", help="one instance, or omit for all")
     p.set_defaults(func=cmd_check_credential)
 
     return ap

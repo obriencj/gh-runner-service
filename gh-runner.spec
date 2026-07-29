@@ -192,9 +192,10 @@ install -m0644 config/gh-runner.conf \
 install -m0644 config/example.conf.sample \
     %{buildroot}%{_sysconfdir}/%{name}/instances.d/example.conf.sample
 
-# %%ghost: the package owns the path and its mode, ships no content, and never
-# touches it on upgrade. Written by `gh-runner-ctl set-credential`.
-touch %{buildroot}%{_sysconfdir}/%{name}/credentials
+# One credential per instance, named for the instance id. Root-only: ctl reads
+# these and pipes them into `podman secret create`, so the uid that runs the
+# containers never needs access to the file itself.
+install -d -m0700 %{buildroot}%{_sysconfdir}/%{name}/credentials.d
 
 # Instance state root. Home directory of the service account.
 install -d -m0700 %{buildroot}%{_sharedstatedir}/%{name}
@@ -284,9 +285,12 @@ cat <<'EOF'
 gh-runner installed. No runners are enabled — dropping a config file and
 activating it are deliberately separate steps.
 
-    gh-runner-ctl set-credential
     gh-runner-ctl add 01 --url https://github.com/OWNER/REPO --labels alma10,podman
     gh-runner-ctl enable 01
+
+`add` prompts for that worker's GitHub credential. Each worker has its own,
+in /etc/gh-runner/credentials.d/<id>, so instances can point at different
+repositories or organisations.
 
 First start builds the container image: several minutes, and it needs egress.
 Run `gh-runner-ctl --help` and `gh-runner-ctl keys` for the reference.
@@ -363,7 +367,7 @@ exit 0
 %dir %{_sysconfdir}/%{name}/instances.d
 %config(noreplace) %{_sysconfdir}/%{name}/gh-runner.conf
 %{_sysconfdir}/%{name}/instances.d/example.conf.sample
-%ghost %attr(0600, %{service_user}, %{service_user}) %{_sysconfdir}/%{name}/credentials
+%dir %attr(0700, root, root) %{_sysconfdir}/%{name}/credentials.d
 
 %attr(0700, %{service_user}, %{service_user}) %dir %{_sharedstatedir}/%{name}
 

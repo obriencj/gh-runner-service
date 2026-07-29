@@ -16,7 +16,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import GLOBAL_CONF, INSTANCES_DIR, STATE_ROOT, CtlError
+from . import CREDENTIALS_DIR, GLOBAL_CONF, INSTANCES_DIR, SECRET_PREFIX
+from . import STATE_ROOT, CtlError
 
 _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -128,6 +129,14 @@ class Instance:
         return self.state_dir / ".drain"
 
     @property
+    def credential_path(self) -> Path:
+        return CREDENTIALS_DIR / self.iid
+
+    @property
+    def secret_name(self) -> str:
+        return f"{SECRET_PREFIX}-{self.iid}"
+
+    @property
     def unit(self) -> str:
         return f"gh-runner@{self.iid}.service"
 
@@ -202,7 +211,13 @@ SCAFFOLD = """\
 # /etc/gh-runner/instances.d/{iid}.conf
 #
 # Format is Podman --env-file, not systemd EnvironmentFile: no quoting, no
-# escapes, no variable expansion. See gh-runner.conf(5).
+# escapes, no variable expansion. Run `gh-runner-ctl keys` for the reference.
+#
+# The GitHub credential for this worker is NOT here — a token in a
+# world-readable config file is not a token any more. It lives in
+# /etc/gh-runner/credentials.d/{iid}, mode 0600, written by:
+#
+#     gh-runner-ctl set-credential {iid}
 
 # --- runtime env: read by entrypoint.sh at each container start
 RUNNER_URL={url}

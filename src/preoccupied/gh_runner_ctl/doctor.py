@@ -10,7 +10,7 @@ missing socket that surfaces as an unrelated Podman error.
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import CREDENTIALS, QUADLET_SRC, CtlError
+from . import QUADLET_SRC, CtlError
 from ._run import podman, run, service_uid, systemctl
 from . import conf, secret, units
 
@@ -85,15 +85,36 @@ def check_cgroup_delegation() -> tuple[bool, str]:
     return True, " ".join(sorted(have))
 
 
-def check_credential() -> tuple[bool, str]:
-    if not CREDENTIALS.exists() or CREDENTIALS.stat().st_size == 0:
-        return False, "no credential; run: gh-runner-ctl set-credential"
-    if not secret.exists():
-        return False, (
-            "credential file present but the podman secret is missing; "
-            "run: gh-runner-ctl sync"
-        )
-    return True, ""
+def check_credentials() -> tuple[bool, str]:
+    """
+    Credentials are per instance. A shared one would make two runners
+    pointed at different orgs impossible.
+    """
+
+    instances = conf.all_instances()
+    if not instances:
+        return True, "no instances configured"
+
+    problems = []
+    for inst in instances:
+        if not secret.has_credential(inst.iid):
+            problems.append(
+                f"{inst.iid}: no credential "
+                f"(gh-runner-ctl set-credential {inst.iid})"
+            )
+        elif not secret.secret_exists(inst.iid):
+            problems.append(
+                f"{inst.iid}: credential file present, podman secret missing "
+                f"(gh-runner-ctl sync)"
+            )
+
+    known = {i.iid for i in instances}
+    for name in secret.orphan_credentials(known):
+        problems.append(f"credential {name!r} has no instance")
+
+    if problems:
+        return False, "; ".join(problems)
+    return True, f"{len(instances)} instance(s) with credentials"
 
 
 def check_quadlet_dryrun() -> tuple[bool, str]:
@@ -176,7 +197,7 @@ CHECKS = [
     ("podman.socket", check_podman_socket),
     ("podman version", check_podman_version),
     ("cgroup delegation", check_cgroup_delegation),
-    ("credential", check_credential),
+    ("credentials", check_credentials),
     ("quadlet symlinks", check_unit_links),
     ("quadlet -dryrun", check_quadlet_dryrun),
     ("volume labels", check_dropin_z),
