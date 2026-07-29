@@ -3,8 +3,14 @@
 RPM-packaged, rootless-Podman, ephemeral GitHub Actions self-hosted runners on
 AlmaLinux 10.
 
-Status: draft / bootstrap target
+Status: specified / bootstrap target
 Target platform: AlmaLinux 10 (EL10), Podman 5.x, systemd 257+
+
+The problem this exists to solve: standing up an Actions runner on an EL
+baseline is a genuinely miserable afternoon — upstream's
+`installdependencies.sh` does not know EL10, `svc.sh` writes a rootful unit,
+and the runner assumes Docker. This package makes it `dnf install`, one
+credential, and one conf file per runner.
 
 ---
 
@@ -18,7 +24,9 @@ Target platform: AlmaLinux 10 (EL10), Podman 5.x, systemd 257+
   based on Ubuntu, with build dependencies baked in. Workflows written against
   `ubuntu-latest` work without a `container:` block.
 - Each runner is **ephemeral**: one job, then the container exits and is
-  recreated from the image. Fresh filesystem per job.
+  recreated from the image. The *container* filesystem is fresh per job. The
+  instance state directory is deliberately not — §5 makes that impossible, and
+  §5.1 defines what is wiped and what is kept.
 - **N instances, configurable after install** without editing package-owned
   files or writing units by hand.
 - Rootless throughout. One dedicated service account, no Docker anywhere.
@@ -53,13 +61,22 @@ host (AlmaLinux 10, VM)
 │   │        │    /var/lib/gh-runner/<id>        → /var/lib/gh-runner/<id>
 │   │        │    $XDG_RUNTIME_DIR/podman.sock   → /var/run/docker.sock
 │   │        │
-│   │        └── runner emits `docker create …` → shim → host podman
+│   │        └── runner emits `docker create …`
+│   │              └── shim: drop sock mount, add job limits, label
+│   │                    └── podman-remote ──► host podman ◄── podman.socket
 │   │                                                      │
 │   └── job containers ◄──────────────── SIBLINGS, not children
 │       (created by host podman, in the same store)
 │
-└── quadlet: gh-runner-prune.timer  (idle-guarded cleanup)
+└── user timers: gh-runner-prune       (age-based cleanup)
+                 gh-runner-image-refresh (weekly rebuild)
+                 gh-runner-version-check (upstream floor watch)
 ```
+
+The engine the shim talks to is the **host** user's Podman, reached over the
+mounted `podman.sock`. There is no engine inside the runner container — only
+`podman-remote` (§6). `podman.socket` is therefore a hard runtime dependency of
+every instance, not an implementation detail (§8, §10).
 
 **Key consequence:** job containers are siblings of the runner container,
 created by host Podman. The runner *believes* it is nesting; it is not.
@@ -83,24 +100,58 @@ created by host Podman. The runner *believes* it is nesting; it is not.
 /usr/share/gh-runner/context/          build context (shim, apt manifest)
 /usr/share/gh-runner/quadlet/gh-runner.build
 /usr/share/gh-runner/quadlet/gh-runner@.container
-/usr/share/gh-runner/quadlet/gh-runner-prune.service
-/usr/share/gh-runner/quadlet/gh-runner-prune.timer
+/etc/systemd/user/gh-runner-prune.service
+/etc/systemd/user/gh-runner-prune.timer
+/etc/systemd/user/gh-runner-image-refresh.service
+/etc/systemd/user/gh-runner-image-refresh.timer
+/etc/systemd/user/gh-runner-version-check.service
+/etc/systemd/user/gh-runner-version-check.timer
 /usr/libexec/gh-runner/entrypoint.sh
 /usr/libexec/gh-runner/register.sh
-/usr/libexec/gh-runner/prune-idle.sh
+/usr/libexec/gh-runner/prune-jobs.sh
+/usr/libexec/gh-runner/version-check.sh
 /usr/bin/gh-runner-ctl
 /usr/share/man/man8/gh-runner-ctl.8.gz
 /usr/share/man/man5/gh-runner.conf.5.gz
 ```
 
+**Only Quadlet unit types live in the Quadlet directory.** Quadlet processes
+`.container`, `.build`, `.volume`, `.network`, `.pod`, `.image`, and `.kube`.
+Anything else placed there — notably a plain `.service` or `.timer` — is
+*silently ignored*, with no error and no generated unit. The maintenance timers
+are ordinary user units and ship in `/etc/systemd/user/`, which is
+package-ownable and needs no per-uid symlinking.
+
+### Package dependencies
+
+```
+Requires:       podman >= 5.0
+Requires:       systemd >= 257
+Requires:       shadow-utils
+Requires:       container-selinux
+Requires:       policycoreutils-python-utils     # semanage, used in %post
+Requires(post): systemd, policycoreutils-python-utils
+```
+
+`policycoreutils-python-utils` is easy to forget and fails at `%post` time on a
+minimal host, which is exactly where this package is meant to be installed.
+
 ### Config (`%config(noreplace)`)
 
 ```
 /etc/gh-runner/gh-runner.conf              global defaults
-/etc/gh-runner/instances.d/               per-instance, one file per runner
+/etc/gh-runner/instances.d/                per-instance, one file per runner
 /etc/gh-runner/instances.d/example.conf.sample
-/etc/gh-runner/credentials                 0600 gh-runner:gh-runner, NOT %config
+/etc/gh-runner/credentials                 %ghost, 0600 gh-runner:gh-runner
 ```
+
+`credentials` is `%ghost`: the package owns the path and its mode, ships no
+content, and does not touch it on upgrade. It is written by
+`gh-runner-ctl set-credential` and is the *only* operator-facing home for the
+GitHub credential. See §7.4 for how it reaches the container.
+
+Only `*.conf` in `instances.d/` is an instance. The shipped sample is
+`.conf.sample` precisely so that installing the package activates nothing.
 
 ### Generated / state
 
@@ -110,9 +161,15 @@ created by host Podman. The runner *believes* it is nesting; it is not.
 /etc/containers/systemd/users/<uid>/gh-runner@<id>.container.d/limits.conf
                                            generated by `ctl sync` from the
                                            unit-shaping keys; derived state
+podman secret `gh-runner-token`             derived from /etc/gh-runner/
+                                           credentials by `ctl sync`; §7.4
 /var/lib/gh-runner/                         home dir + podman graphroot
 /var/lib/gh-runner/<id>/                    per-instance runner root
                         bin/  externals/    synced from /usr/lib at start
+                        config.sh  run.sh   synced likewise — see below
+                        run-helper.sh  env.sh
+                        .version            sync marker
+                        .drain              drain flag, see §7.3
                         _work/  _diag/
                         .runner  .credentials
 ```
@@ -120,8 +177,15 @@ created by host Podman. The runner *believes* it is nesting; it is not.
 **Why the runner root lives in `/var` and not `/usr`:** the runner writes
 `.runner`, `.credentials`, and `_diag/` into its own root directory. That is
 incompatible with RPM ownership. `/usr/lib/gh-runner/<version>` is the pristine
-template; `entrypoint.sh` syncs it into the instance state dir when a version
-marker differs. The sync is one-time per version per instance, not per job.
+template; `entrypoint.sh` syncs it into the instance state dir when the
+`.version` marker differs. The sync is one-time per version per instance, not
+per job.
+
+**The sync covers the wrappers, not just `bin/` and `externals/`.** `config.sh`
+and `run.sh` resolve their own directory and write `.runner`, `.credentials`,
+and `_diag/` relative to it. Run from the read-only `/usr/lib` mount they would
+attempt to write into it and fail. The whole extracted tree is synced; the
+`/usr/lib` copy is a template that is only ever read.
 
 ---
 
@@ -189,6 +253,35 @@ Hence the mount is `/var/lib/gh-runner/<id>:/var/lib/gh-runner/<id>` — not a
 convenience, a requirement. Baking the runner tree into the image instead is
 the classic failure mode.
 
+### 5.1 Consequence: the workspace outlives the container
+
+The invariant forces the instance state directory to be a persistent host bind
+mount. So "ephemeral" applies to the container, not to `_work`. Every job sees
+whatever the previous job left in `_work`, `_work/_actions`, and
+`_work/_tool`.
+
+This must not be quietly relied on as a security property; it is a performance
+property. Re-downloading the toolcache and every action on each job is most of
+the cold-job latency this design exists to avoid, so the persistence is kept
+and scoped explicitly:
+
+| Path | Per-job treatment | Why |
+|---|---|---|
+| `_work/<repo>` | **removed** by `entrypoint.sh` before `run.sh` | Job checkouts must not leak across jobs. |
+| `_work/_temp` | **removed** | Scratch. Also where credentials get staged. |
+| `_work/_actions` | kept | Action checkouts, content-addressed by ref. |
+| `_work/_tool` | kept | Toolcache. Expensive to rebuild, safe to share. |
+| `_diag` | kept, pruned by age (§8) | Needed to debug the previous failure. |
+
+`RUNNER_WIPE_WORK=1` in an instance conf drops `_actions` and `_tool` as well,
+for an instance that wants maximum isolation and will pay for it. Default is
+`0`.
+
+The trust statement is therefore: **the container is fresh per job, the
+workspace is fresh per repository, and the caches are shared within an
+instance.** All instances share one uid and one Podman store regardless (§11),
+so this adds no exposure that the architecture did not already have.
+
 ---
 
 ## 6. Container image
@@ -200,14 +293,24 @@ FROM docker.io/library/ubuntu:24.04
 
 # Runner .NET deps + baked-in toolchain
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl jq git \
+      ca-certificates curl jq git openssl \
       libicu74 libssl3 libkrb5-3 zlib1g \
       build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-ENV RUNNER_ALLOW_RUNASROOT=1
+# Remote client only. There is no engine in this container; it drives the
+# host engine over the mounted socket. Pinned to the host's Podman minor
+# version — remote/server API skew is a real and confusing failure mode.
+ARG PODMAN_REMOTE_VERSION=5.*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         podman-remote=${PODMAN_REMOTE_VERSION} \
+    && rm -rf /var/lib/apt/lists/*
 
-# docker → podman shim; strips the hardcoded socket mount
+ENV RUNNER_ALLOW_RUNASROOT=1
+ENV CONTAINER_HOST=unix:///var/run/docker.sock
+
+# docker → podman-remote shim; strips the hardcoded socket mount
 COPY context/docker /usr/local/bin/docker
 RUN chmod +x /usr/local/bin/docker
 
@@ -221,10 +324,29 @@ now ours, inside the container, version-controlled in the package. The host
 keeps no global symlink and no mount namespace hack. This is strictly better
 than either host-side workaround.
 
-Shim behaviour: drop the `docker.sock` `-v` pair, exec `podman` with the
-remainder. A build-time flag can switch it to *rewrite* the mount instead, for
-workflows that genuinely need socket access inside the job container. Default
-is drop.
+**There is no Podman engine inside the runner container.** The shim execs
+`podman-remote`, which connects to the host user's engine via `CONTAINER_HOST`
+pointed at the socket the Quadlet mounts to `/var/run/docker.sock`. Installing
+a full `podman` in the image would give the runner a second, empty container
+store and every job would silently re-pull its images into a store the host
+never prunes. Remote client, one store, one engine.
+
+Shim behaviour, in order:
+
+1. Drop the `docker.sock` `-v` pair. A build-time flag switches this to
+   *rewrite* the mount instead, for workflows that genuinely need socket access
+   inside the job container. Default is drop.
+2. On `create` / `run`, inject `--label io.preoccupied.gh-runner.role=job` and
+   `--label io.preoccupied.gh-runner.id=$RUNNER_ID`, so §8's pruner can
+   identify what it owns rather than reaping by exclusion.
+3. On `create` / `run`, inject `--memory=$JOB_MEMORY_MAX` and
+   `--cpus=$JOB_CPUS` when those are set (§7). This is the only point at which
+   a job container's resources can be constrained; see §7.2.
+4. `exec podman-remote "$@"` with the remainder.
+
+`openssl` is present because GitHub App authentication (§11) requires signing a
+JWT, and `curl` plus `jq` cannot do that alone. It is a few hundred kilobytes
+and removes the need to rebuild the image at the moment the PAT is retired.
 
 Note `--no-install-recommends` plus explicit `build-essential`: on Ubuntu,
 `libc6-dev` is a *Recommends* of `gcc`, not a Depends, so a slimmed image
@@ -245,9 +367,17 @@ The instance ID is the filename stem and is used consistently as:
 - state directory — `/var/lib/gh-runner/<id>/`
 - default runner name — `<hostname>-<id>`
 
-**File format: systemd `EnvironmentFile` syntax.** No parser to write, no
-format to document beyond a man page, and Quadlet consumes it natively via
+**File format: `KEY=value`, one per line, `#` comments.** No parser to write,
+no format to document beyond a man page, and Quadlet consumes it natively via
 `EnvironmentFile=` in `[Container]`.
+
+The syntax is **Podman's `--env-file`, not systemd's `EnvironmentFile`** — that
+is where Quadlet routes the key. The two are similar enough to be confused and
+different enough to bite: Podman does not perform systemd's quote removal or
+escape processing, so `RUNNER_NAME="build box"` yields a name that includes the
+quote characters. Keep values unquoted and free of leading or trailing
+whitespace. `gh-runner-ctl show` reproduces Podman's parsing rules, not
+systemd's, and `ctl edit` rejects a file that relies on the difference.
 
 ```ini
 # /etc/gh-runner/instances.d/01.conf
@@ -255,36 +385,75 @@ format to document beyond a man page, and Quadlet consumes it natively via
 # --- runtime env: consumed by entrypoint.sh at each container start
 RUNNER_URL=https://github.com/koskari-lang/koskari
 RUNNER_LABELS=alma10,podman,c
-RUNNER_NAME=gh-runner-01-a
+#RUNNER_NAME=                       # default: <hostname>-<id>
 #RUNNER_GROUP=default
+#RUNNER_WIPE_WORK=0                 # see §5.1
+
+# --- job-shaping: consumed by the shim, applied to job containers
+JOB_MEMORY_MAX=12G
+JOB_CPUS=4
 
 # --- unit-shaping: routed to a systemd drop-in, see below
-MEMORY_MAX=12G
+MEMORY_MAX=2G
 CPU_WEIGHT=100
 ```
 
 Global defaults in `/etc/gh-runner/gh-runner.conf`, loaded first; per-instance
 file wins.
 
-### Two classes of key, one file
+### 7.1 Three classes of key, one file
 
-One operator-facing file, but the keys have different destinations and this
-must not be papered over:
+One operator-facing file, but the keys have three different destinations and
+this must not be papered over:
 
 | Class | Keys | Destination | Takes effect |
 |---|---|---|---|
-| **Runtime env** | `RUNNER_URL`, `RUNNER_NAME`, `RUNNER_LABELS`, `RUNNER_GROUP` | `EnvironmentFile=` in the `.container`; read by `entrypoint.sh` | Next container start |
+| **Runtime env** | `RUNNER_URL`, `RUNNER_NAME`, `RUNNER_LABELS`, `RUNNER_GROUP`, `RUNNER_WIPE_WORK` | `EnvironmentFile=` in the `.container`; read by `entrypoint.sh` | Next container start |
+| **Job-shaping** | `JOB_MEMORY_MAX`, `JOB_CPUS` | same `EnvironmentFile=`; read by the **shim**, applied to each job container | Next job |
 | **Unit-shaping** | `MEMORY_MAX`, `CPU_WEIGHT`, extra volumes | `%i.container.d/limits.conf` drop-in, generated | `daemon-reload` + restart |
 
 Quadlet fixes unit-shaping values at generation time, so an `EnvironmentFile`
 cannot reach them. Without the generated drop-in, `MEMORY_MAX` in a conf file
 silently does nothing — the specific trap this split exists to avoid.
 
+### 7.2 Why job-shaping is a separate class
+
+`MEMORY_MAX` constrains the **runner unit**, and the runner unit contains only
+`Runner.Listener` — a few hundred megabytes of .NET that never does any work.
+Job containers are siblings created by host Podman (§2); they land in their own
+cgroup scope under `user.slice` and inherit nothing from the runner unit.
+
+So `MEMORY_MAX=12G` on a runner instance limits the wrong process, and the
+compiler that eats the host still eats the host. This is the same silent-no-op
+failure as an ungenerated drop-in, one level further down, and it is worse
+because the value *looks* applied — `systemctl show` reports it faithfully.
+
+`JOB_MEMORY_MAX` and `JOB_CPUS` are therefore distinct keys with a distinct
+mechanism: they ride in as ordinary container env and the shim turns them into
+`--memory` / `--cpus` on every `docker create` and `docker run` it forwards
+(§6). That is the only place in the architecture with the job container's
+command line in hand.
+
+Two consequences worth stating:
+
+- A job that runs **no** container — a plain `runs-on` job with no
+  `container:` block and no service containers — executes inside the runner
+  container itself, and is bounded by `MEMORY_MAX`, not `JOB_MEMORY_MAX`. Both
+  keys are real; they cover different job shapes. Set both. `MEMORY_MAX`
+  defaults to `2G` on the assumption of containerised jobs and wants raising on
+  an instance that runs bare ones.
+- Enforcement needs cgroup delegation for the `memory` and `cpu` controllers on
+  `user@<uid>.service`. Modern systemd delegates these by default;
+  `gh-runner-ctl doctor` checks `/sys/fs/cgroup/user.slice/user-<uid>.slice/
+  cgroup.controllers` and says so plainly if they are missing, because the
+  failure mode is otherwise a limit that is configured, reported, and not
+  enforced.
+
 `gh-runner-ctl sync` regenerates the drop-ins from the conf files rather than
 assuming they are current, so a hand-edited conf becomes real on the next
 `sync`. Sync means sync.
 
-### Reconfiguration is nearly free
+### 7.3 Reconfiguration is nearly free
 
 Ephemeral runners re-register on every container start, so changing
 `RUNNER_LABELS` takes effect when the current job finishes and the next
@@ -294,8 +463,30 @@ tax on a persistent runner does not apply.
 `ctl` therefore defaults to **graceful**: mark the instance and let the natural
 job-boundary exit pick up the change. `--now` forces an immediate restart and
 kills any running job. Unit-shaping changes always require `daemon-reload` plus
-a real restart, which is the second reason to keep the two classes visibly
+a real restart, which is the second reason to keep the three classes visibly
 distinct.
+
+**The drain mechanism.** "Graceful" needs a concrete implementation, because
+neither systemd verb does what is wanted here: `systemctl --user disable` only
+affects the next boot and leaves the restart loop running, while `stop` kills
+the in-flight job — precisely the distinction `--now` is meant to express.
+
+```
+ctl disable <id>          touch /var/lib/gh-runner/<id>/.drain
+                          (current job finishes, container exits, no restart)
+ctl disable <id> --now    rm nothing; systemctl --user stop, job dies
+ctl enable  <id>          rm .drain; systemctl --user enable --now
+```
+
+`entrypoint.sh` checks for `.drain` **before** registering (§9 step 1) and
+exits `78` if present. The unit carries `RestartPreventExitStatus=78`, so
+`Restart=always` declines to restart and the instance settles into
+`inactive (dead)` at a job boundary with nothing half-finished. Any container
+already running a job is untouched and drains on its own.
+
+`ctl list` reports a drained-but-enabled instance as `draining`, since
+"enabled, not running, on purpose" is otherwise indistinguishable from a crash
+loop that has given up.
 
 ### Alternatives considered and rejected
 
@@ -317,11 +508,17 @@ gh-runner-ctl edit <id>                    $EDITOR, validate on save
 gh-runner-ctl rm <id>                      disable, deregister, remove conf and state
 
 gh-runner-ctl enable <id> [--now]          enable + start (graceful by default)
-gh-runner-ctl disable <id> [--now]
-gh-runner-ctl sync                         reconcile units and drop-ins to conf files
+gh-runner-ctl disable <id> [--now]         drain by default, --now kills the job
+gh-runner-ctl sync                         reconcile units, drop-ins and secret to conf
 gh-runner-ctl list                         conf files vs enabled units, drift marked
 gh-runner-ctl status
-gh-runner-ctl doctor                       quadlet -dryrun, linger, subuid, socket, labels
+gh-runner-ctl doctor                       quadlet -dryrun, linger, subuid, socket,
+                                           podman.socket, cgroup delegation, labels
+
+gh-runner-ctl set-credential [--stdin]     write /etc/gh-runner/credentials, 0600,
+                                           then load it into the podman secret
+gh-runner-ctl check-credential             mint a throwaway registration token
+                                           against each configured RUNNER_URL
 ```
 
 `gh-runner-ctl` is a thin wrapper that runs `systemctl --user` as the service
@@ -333,13 +530,37 @@ has to think about it.
 runner picking up that label" is otherwise a manual diff against
 `gh-runner.conf`.
 
+### 7.4 The credential has one path
+
+`/etc/gh-runner/credentials` is the operator-facing file. The Quadlet consumes
+a **Podman secret** (§8), which lives in the service account's own secret store
+and is what actually appears at `/run/secrets/gh-token` inside the container.
+Those are two different things and something has to bridge them:
+
+```
+/etc/gh-runner/credentials  ──[ ctl set-credential | ctl sync ]──►  podman secret
+        0600, %ghost                                               gh-runner-token
+```
+
+`ctl sync` recreates the secret from the file whenever their contents differ,
+so the file stays the single source of truth and the secret is derived state,
+consistent with the `instances.d/` invariant below. `podman secret create`
+cannot update in place, so `sync` removes and recreates; a container already
+running keeps the old value until its next start, which is the usual
+job-boundary behaviour and needs no special handling.
+
+If the secret is missing, the container fails to start with a Podman error that
+does not mention credentials at all. `ctl doctor` checks for it explicitly and
+`ctl enable` refuses on a missing credential rather than letting an instance
+enter a restart loop.
+
 ### Invariant: `instances.d/` is the only store
 
 `ctl` has **no secondary state** — no database, no cache, no registry file. It
 reads and writes the same files a human or a config-management tool would, and
 `list`/`show` derive everything from the directory plus a systemd query. The
-generated unit drop-ins are derived state, regenerated by `sync`, never a second
-source of truth.
+generated unit drop-ins and the Podman secret are derived state, regenerated by
+`sync`, never a second source of truth.
 
 Consequence: hand-editing a conf file and running `sync` is fully equivalent to
 going through `ctl`. `add` is a scaffolding convenience — `useradd`, not
@@ -351,7 +572,12 @@ knowledge outside the package.
 
 ---
 
-## 8. Quadlet units
+## 8. Units
+
+Two kinds, and the distinction is load-bearing (§3): the runner image and the
+runner instances are **Quadlet** units in
+`/etc/containers/systemd/users/<uid>/`; the three maintenance timers are
+**ordinary user** units in `/etc/systemd/user/`.
 
 ### `gh-runner.build`
 
@@ -371,6 +597,8 @@ Pull=newer
 ```ini
 [Unit]
 Description=GitHub Actions Runner (%i)
+Requires=podman.socket
+After=podman.socket
 
 [Container]
 Image=gh-runner.build
@@ -385,11 +613,12 @@ Volume=%t/podman/podman.sock:/var/run/docker.sock
 Secret=gh-runner-token,type=mount,target=/run/secrets/gh-token
 Label=io.preoccupied.gh-runner.role=runner
 Label=io.preoccupied.gh-runner.id=%i
-PodmanArgs=--rm
 
 [Service]
 Restart=always
 RestartSec=5
+RestartPreventExitStatus=78
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target
@@ -398,11 +627,81 @@ WantedBy=default.target
 `Image=gh-runner.build` is the **literal filename**, not the tag — that is what
 makes Quadlet generate the ordering dependency on `gh-runner-build.service`.
 
+`Requires=podman.socket` is not optional. The socket mount source is
+`%t/podman/podman.sock`; if the socket unit has not run, that path does not
+exist and Podman creates a *directory* there, after which the shim's
+`CONTAINER_HOST` points at a directory and every `docker` call inside the
+runner fails with a message about the wrong thing. `%post` enables the socket
+(§10) and this ordering keeps it true across reboots.
+
+No `PodmanArgs=--rm`. Quadlet already emits `--replace --rm` in the generated
+`ExecStart` for a `.container`, and `--replace` is load-bearing here: an
+unclean exit leaves a named container behind, and without replace the next
+start collides on the name and wedges the instance. Restating `--rm` by hand
+obscures that it — and the `--replace` we actually depend on — come from
+Quadlet.
+
+`StartLimitIntervalSec=0` disables start-rate limiting. `RestartSec=5` keeps
+the loop well under the default burst in normal operation, but a persistent
+failure (bad credential, GitHub unreachable) would otherwise trip the limit and
+leave the unit `failed` needing a manual `reset-failed` — a runner that stays
+down after the outage that caused it has ended. The instance should keep
+retrying and be visible in `ctl status` as retrying.
+
+`RestartPreventExitStatus=78` implements the §7.3 drain.
+
 ### `gh-runner-prune.timer`
 
-Every 30 minutes, calling `prune-idle.sh`, which no-ops if any `Runner.Worker`
-process exists. Filters on the role label so it cannot reap a stopped runner
-container or a job network mid-creation.
+Ordinary user units in `/etc/systemd/user/`, not Quadlet files (§3).
+
+Every 30 minutes, calling `prune-jobs.sh`. It reaps containers, networks, and
+volumes carrying `io.preoccupied.gh-runner.role=job` — the label the shim
+stamps on creation (§6) — that have been stopped longer than
+`PRUNE_MAX_AGE` (default `2h`), plus dangling images and `_diag` files older
+than `DIAG_MAX_AGE` (default `14d`).
+
+**Age-based, not idle-gated.** An earlier form of this no-op'd whenever any
+`Runner.Worker` process existed. On a host with several instances and steady
+traffic there is essentially always one, so the pruner would never run —
+failing exactly under the load that makes it necessary. Age is per-object and
+composes with concurrent jobs: a container stopped two hours ago is garbage
+regardless of what else is running.
+
+**Positive selection, not exclusion.** Reaping "everything that is not
+`role=runner`" would also reap anything else the service account happens to
+own, and would race a job container between `create` and `start`. The pruner
+touches only objects it can prove the shim created, and the age floor covers
+the creation race.
+
+### `gh-runner-image-refresh.timer`
+
+Weekly, plus `Persistent=true`. Runs `systemctl --user restart
+gh-runner-build.service` with `Pull=newer` in effect, so the base image and the
+baked apt packages are refreshed.
+
+Without this the build unit's `RemainAfterExit=yes` means the image is built
+exactly once, at install. The ephemeral loop then makes everything *look* fresh
+— new container every job — while the toolchain inside it silently ages toward
+the first "works on my machine" that is really "the runner's `gcc` is two years
+old". Rebuilding is cheap and the failure mode is expensive.
+
+The refresh does not disturb running jobs: existing containers keep the image
+they started with, and instances pick up the new one at their next job
+boundary.
+
+### `gh-runner-version-check.timer`
+
+Daily. `version-check.sh` compares `/usr/lib/gh-runner/current/.version`
+against the latest `actions/runner` release tag and logs at warning level when
+the gap exceeds `VERSION_WARN_RELEASES` (default 2).
+
+`--disableupdate` means the runner will never self-update, and GitHub
+eventually refuses registration from runners below a floor it moves without
+notice. That converts "ship a new RPM" from an occasional chore into a standing
+obligation, and the failure presents as every instance simultaneously failing
+to register — a confusing outage if nothing has been watching the version. This
+timer makes it a warning in the journal weeks earlier. It only reports; it
+never updates anything.
 
 ---
 
@@ -410,20 +709,35 @@ container or a job network mid-creation.
 
 Per container start, i.e. per job:
 
-1. Source instance env (already in environment via `EnvironmentFile`).
-2. Sync `/usr/lib/gh-runner/current` → `$RUNNER_ROOT` if `.version` marker
-   differs. Idempotent; no-op on the common path.
-3. Read PAT/App key from `/run/secrets/gh-token`; `POST` to the
+1. **Drain check.** If `$RUNNER_ROOT/.drain` exists, log and `exit 78`.
+   `RestartPreventExitStatus=78` stops the loop here (§7.3). This is first so
+   that a drained instance never mints a token it will not use.
+2. Source instance env (already in environment via `EnvironmentFile`).
+3. Sync `/usr/lib/gh-runner/current` → `$RUNNER_ROOT` if the `.version` marker
+   differs — the full tree, wrappers included (§3). Idempotent; no-op on the
+   common path.
+4. **Workspace hygiene** (§5.1): remove `_work/<repo>` and `_work/_temp`;
+   keep `_work/_actions` and `_work/_tool` unless `RUNNER_WIPE_WORK=1`.
+5. **Preflight.** Verify `/var/run/docker.sock` is a socket and
+   `podman-remote info` succeeds. Fail loudly here rather than sixty seconds
+   later inside a job step, where it surfaces as an inscrutable `docker: command
+   failed` in a workflow log the operator may not even be able to see.
+6. Read PAT/App key from `/run/secrets/gh-token`; `POST` to the
    registration-token endpoint (repo or org, inferred from `RUNNER_URL`).
-4. `config.sh --unattended --ephemeral --disableupdate --replace \
+7. `config.sh --unattended --ephemeral --disableupdate --replace \
    --url $RUNNER_URL --token <minted> --name $RUNNER_NAME \
    --labels $RUNNER_LABELS --work $RUNNER_ROOT/_work`
-5. `exec run.sh`
-6. Runner takes one job, exits. `--rm` destroys the container.
+8. `exec run.sh`
+9. Runner takes one job, exits. Quadlet's `--rm` destroys the container.
    `Restart=always` starts a fresh one.
 
 `--replace` matters: an unclean exit leaves a registration behind, and without
 it the next start fails on a name collision and wedges the instance.
+
+`RUNNER_NAME` defaults to `<hostname>-<id>`, which is unique per host and per
+instance. Two instances sharing a name would `--replace` each other on every
+job and produce an unwinnable registration fight, so `ctl doctor` checks for
+duplicates across `instances.d/`.
 
 ---
 
@@ -435,33 +749,74 @@ non-overlapping subuid/subgid block. Home is `/var/lib/gh-runner`.
 
 **`%post`**
 - `loginctl enable-linger gh-runner`
-- `semanage fcontext -a -t container_file_t '/var/lib/gh-runner/[^/]+/(_work|externals)(/.*)?'`
-- `restorecon -R /var/lib/gh-runner`
-- symlink quadlet units into `/etc/containers/systemd/users/<uid>/`
+- Wait for the user manager. `enable-linger` returns before
+  `user@<uid>.service` is up, so the `daemon-reload` below is a race on a fast
+  install. Poll for `/run/user/<uid>/bus`, a few seconds, then proceed
+  best-effort — `ctl sync` is the operation that must converge, `%post` is
+  merely a head start.
+- SELinux contexts, both trees:
+  ```
+  semanage fcontext -a -t container_file_t \
+      '/var/lib/gh-runner/[^/]+(/.*)?'
+  semanage fcontext -a -t container_ro_file_t \
+      '/usr/lib/gh-runner(/.*)?'
+  restorecon -R /var/lib/gh-runner /usr/lib/gh-runner
+  ```
+- symlink the **Quadlet** units into `/etc/containers/systemd/users/<uid>/`.
+  The maintenance timers are already installed in `/etc/systemd/user/` and need
+  no symlink (§3).
+- `systemctl --user -M gh-runner@ enable --now podman.socket`
 - `systemctl --user -M gh-runner@ daemon-reload`
 - Do **not** auto-enable instances. Print a pointer to `gh-runner-ctl`.
 
-**`%preun`** — on removal (not upgrade): `gh-runner-ctl disable --all`,
+**Why the fcontext rules are shaped this way.** The earlier form labelled only
+`_work` and `externals`, but the mount is the whole instance directory, so
+`.runner`, `.credentials`, `_diag/`, and the synced `bin/` were left unlabelled
+and denied. `/usr/lib/gh-runner` needs its own rule because it is `usr_t` by
+default and a container cannot read it.
+
+**Do not "fix" this with `:Z` on the volume.** It is the obvious move and it
+breaks the design: `:Z` relabels with the runner container's private MCS
+category, after which the *sibling* job containers — which have their own
+categories — cannot read `_work`, and every containerised job fails on a
+permission error pointing at a directory that visibly exists and visibly has
+the right owner. The shared labels above are correct precisely because job
+containers must reach the same paths (§5). `ctl doctor` flags a `:Z` that has
+found its way into a drop-in.
+
+**`%preun`** — on removal (not upgrade): `gh-runner-ctl disable --all --now`,
 best-effort deregistration (needs network + credential; log and continue on
 failure).
 
-**`%postun`** — on removal: `semanage fcontext -d`, disable linger, remove
-generated `*.container.d/` drop-ins (derived state, safe to delete), leave
-`/var/lib/gh-runner` in place for inspection.
+**`%postun`** — on removal:
+- `semanage fcontext -d` for both rules
+- remove the Quadlet symlinks from `/etc/containers/systemd/users/<uid>/` and
+  the generated `*.container.d/` drop-ins — all derived state, safe to delete,
+  and dangling symlinks left behind make the next install's `doctor` output
+  actively misleading
+- `systemctl --user -M gh-runner@ daemon-reload` while the account still exists
+- disable linger
+- leave `/var/lib/gh-runner`, `/etc/gh-runner`, and the service account in
+  place for inspection. The credential file goes with them; it is `0600` and
+  removing it silently on an upgrade-gone-wrong is worse than leaving it.
 
 ---
 
-## 11. Known risks and open questions
+## 11. Known risks
+
+Accepted, with the mitigation named. Nothing here is an open question.
 
 | Risk | Notes |
 |---|---|
-| **PAT blast radius** | Ephemeral registration needs a live credential on the box, readable by anything running a job. Scope to `administration: write` on the single repo, or use a GitHub App. Never a classic `repo` PAT. |
-| **`--disableupdate` + version floor** | GitHub rejects runners that fall too far behind. Shipping a new RPM becomes a standing obligation, not an occasional one. Needs a watch/notify mechanism. |
-| **Image staleness** | `RemainAfterExit=yes` means the build runs once. The ephemeral loop makes everything *look* fresh while baked-in apt packages age. Needs a weekly timer restarting `gh-runner-build.service`. |
-| **First-start latency** | Cold start builds the image: minutes, needs egress. Will look hung. Document it. |
+| **PAT blast radius** | Ephemeral registration needs a live credential on the box, readable by anything running a job. Scope to `administration: write` on the single repo, or use a GitHub App. Never a classic `repo` PAT. The image carries `openssl` (§6) so the App path needs no rebuild. |
+| **`--disableupdate` + version floor** | GitHub rejects runners that fall too far behind, and does so all at once across every instance. Mitigated by `gh-runner-version-check.timer` (§8), which only warns — shipping the new RPM remains a standing human obligation. |
+| **Image staleness** | `RemainAfterExit=yes` means the build runs once. The ephemeral loop makes everything *look* fresh while baked-in apt packages age. Mitigated by `gh-runner-image-refresh.timer` (§8). |
+| **First-start latency** | Cold start builds the image: minutes, needs egress. Will look hung. `ctl enable` prints the expected wait and `ctl status` distinguishes *building* from *starting*. |
 | **No inter-instance isolation** | All instances share one Podman store and one uid. Instance 2 can inspect instance 3's job containers. Acceptable only because all instances are one trust domain. Put this in the README. |
-| **Storage growth** | Shared image cache is the upside of a persistent host; unbounded growth is the downside. Watch `podman system df`. |
-| **Quadlet debuggability** | Malformed keys fail silently. `/usr/libexec/podman/quadlet -dryrun -user` should be in the man page and in `gh-runner-ctl doctor`. |
+| **Workspace is not ephemeral** | §5.1. The container is fresh per job; `_actions` and `_tool` are not. A compromised job can poison the toolcache for later jobs *on the same instance*. Inside one trust domain this is the same exposure as the shared Podman store; it is listed because the word "ephemeral" invites a stronger reading. |
+| **Storage growth** | Shared image cache is the upside of a persistent host; unbounded growth is the downside. `gh-runner-prune.timer` covers job containers, dangling images, and `_diag`. It does **not** bound `_work/_tool`, which grows with the variety of toolchain versions the workflows ask for. Watch `podman system df` and the instance dirs. |
+| **Quadlet debuggability** | Malformed keys fail silently, as do non-Quadlet files in the Quadlet directory (§3). `/usr/libexec/podman/quadlet -dryrun -user` should be in the man page and in `gh-runner-ctl doctor`. |
+| **podman-remote version skew** | The in-image client and the host engine are separate packages on separate release cadences. A mismatch surfaces as odd API errors mid-job. `PODMAN_REMOTE_VERSION` pins it, and `ctl doctor` compares client and server versions. |
 
 ---
 
@@ -469,11 +824,17 @@ generated `*.container.d/` drop-ins (derived state, safe to delete), leave
 
 | # | Deliverable | Proves |
 |---|---|---|
-| **M0** | Hand-run `podman run` with the identical-path mount; one job with a `container:` block succeeds | §5 invariant holds; shim works |
-| **M1** | Containerfile + `entrypoint.sh`, one instance, ephemeral loop, no RPM | Registration minting, `--replace`, restart loop |
-| **M2** | Quadlet `.build` + `.container`, still hand-installed | Ordering, secrets, `--rm` semantics |
-| **M3** | RPM: layout, `%prep` excludes/patch, scriptlets, single instance | Packaging model, SELinux in `%post` |
-| **M4** | `instances.d` + `gh-runner-ctl`, N instances | The configurability requirement |
-| **M5** | Ansible role in `preoccupied-net` templating `instances.d` + `sync` | Reproducible second host |
+| **M0** | Hand-run `podman run` with the identical-path mount and a real `podman-remote` over the mounted socket; one job with a `container:` block succeeds | §5 invariant holds; the shim's whole path works |
+| **M1** | Containerfile + `entrypoint.sh`, one instance, ephemeral loop, no RPM | Registration minting, `--replace`, restart loop, workspace hygiene |
+| **M2** | Quadlet `.build` + `.container`, still hand-installed | Ordering on `podman.socket`, secrets, `--rm`/`--replace` semantics, drain via exit 78 |
+| **M3** | RPM: layout, `%prep` excludes/patch, scriptlets, single instance | Packaging model, SELinux in `%post`, credential → secret bridge |
+| **M4** | `instances.d` + `gh-runner-ctl`, N instances, job-shaping limits enforced | The configurability requirement; §7.2 actually bites |
+| **M5** | The three maintenance timers | The package does not rot unattended |
+| **M6** | Ansible role in `preoccupied-net` templating `instances.d` + `sync` | Reproducible second host |
 
-M0 is the one that can invalidate the design. Do it before anything else.
+M0 is the one that can invalidate the design, and it is not merely a test of
+the path invariant. It must exercise the *whole* deviation: a `podman-remote`
+inside the container, talking over the mounted socket, with the shim stripping
+the hardcoded `-v /var/run/docker.sock` that `ContainerOperationProvider`
+compiles in. If that chain does not work, §5 and §6 are both wrong and nothing
+downstream is worth building. Do it before anything else.
