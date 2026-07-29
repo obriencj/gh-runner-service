@@ -279,24 +279,6 @@ runuser -u %{service_user} -- \
         DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus \
     systemctl --user daemon-reload >/dev/null 2>&1 || :
 
-if [ $1 -eq 1 ]; then
-cat <<'EOF'
-
-gh-runner installed. No runners are enabled — dropping a config file and
-activating it are deliberately separate steps.
-
-    gh-runner-ctl add 01 --url https://github.com/OWNER/REPO --labels alma10,podman
-    gh-runner-ctl enable 01
-
-`add` prompts for that worker's GitHub credential. Each worker has its own,
-in /etc/gh-runner/credentials.d/<id>, so instances can point at different
-repositories or organisations.
-
-First start builds the container image: several minutes, and it needs egress.
-Run `gh-runner-ctl --help` and `gh-runner-ctl keys` for the reference.
-
-EOF
-fi
 exit 0
 
 
