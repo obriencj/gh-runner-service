@@ -62,22 +62,8 @@ fi
 
 rpmbuild "${RPMOPTS[@]}" -ba "$TOP/SPECS/$SPEC_NAME"
 
-collected=0
-for f in "$TOP"/RPMS/*/*.rpm "$TOP"/SRPMS/*.rpm; do
-    if [ ! -f "$f" ]; then
-        continue
-    fi
-    case "$f" in
-        *.nosrc.rpm) continue ;;
-    esac
-    cp "$f" "$OUT/"
-    collected=$((collected + 1))
-done
-
-# A build that produced nothing must not exit 0.
-if [ "$collected" -eq 0 ]; then
-    echo "no RPMs produced" >&2
-    exit 1
-fi
-
-ls -l "$OUT"
+# Unguarded on purpose. If a glob matches nothing, cp is handed the literal
+# pattern, fails, and set -e stops here — so a build that produced no packages
+# cannot exit 0 without any bookkeeping to say so.
+cp "$TOP"/RPMS/*/*.rpm "$OUT/"
+cp "$TOP"/SRPMS/*.rpm "$OUT/"
