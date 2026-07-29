@@ -38,19 +38,36 @@ RPM_TARGET   ?= x86_64
 RPM_PLATFORM ?=
 _platform_arg = $(if $(RPM_PLATFORM),--platform $(RPM_PLATFORM),)
 
+# The builder image is tracked by a stamp file that depends on the
+# Containerfile alone.
+#
+# Not a phony prerequisite: that shells out to `podman build` on every single
+# invocation, and any cache miss re-runs the whole dnf layer. Not "no
+# prerequisite" either — then editing the Containerfile leaves you running a
+# stale image and debugging a build failure that is really just a missing
+# package. The stamp gets both: rebuild exactly when the Containerfile
+# changes, and never otherwise.
+#
+# Force one with `make -B builder-image`, or delete the stamp.
+BUILDER_STAMP := $(BUILDDIR)/builder-$(RPM_TAG).stamp
+
 ##@ RPM in a container
 
-.PHONY: builder-image
-builder-image: ## Build the EL build environment image
+$(BUILDER_STAMP): tools/Containerfile.rpmbuild
 	$(PODMAN) build \
 	    $(_platform_arg) \
 	    --build-arg BASE=$(RPM_BASE) \
 	    -t $(RPM_BUILDER) \
 	    -f tools/Containerfile.rpmbuild \
 	    tools
+	@mkdir -p $(dir $@)
+	@touch $@
+
+.PHONY: builder-image
+builder-image: $(BUILDER_STAMP) ## Build the EL build environment image if stale
 
 .PHONY: rpm-container
-rpm-container: ## Build the RPM in a clean EL container
+rpm-container: $(BUILDER_STAMP) ## Build the RPM in a clean EL container
 	@mkdir -p $(RPM_OUT) $(RPM_CACHE)
 	$(PODMAN) run --rm \
 	    $(_platform_arg) \
@@ -64,7 +81,7 @@ rpm-container: ## Build the RPM in a clean EL container
 	@echo "RPMs in $(RPM_OUT)/"
 
 .PHONY: shell-container
-shell-container: builder-image ## Interactive shell in the build environment
+shell-container: $(BUILDER_STAMP) ## Interactive shell in the build environment
 	$(PODMAN) run --rm -it \
 	    $(_platform_arg) \
 	    -e RPM_TARGET=$(RPM_TARGET) \
@@ -74,6 +91,7 @@ shell-container: builder-image ## Interactive shell in the build environment
 	    $(RPM_BUILDER) /bin/bash
 
 .PHONY: clean-container
-clean-container: ## Remove the builder image and cached sources
+clean-container: ## Remove the builder image, its stamp, and cached sources
 	-$(PODMAN) rmi $(RPM_BUILDER)
+	rm -f $(BUILDER_STAMP)
 	rm -rf $(RPM_CACHE)

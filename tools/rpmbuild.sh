@@ -41,10 +41,28 @@ if [ -n "$RPM_TARGET" ]; then
     echo "  target:   ${RPM_TARGET} (cross-tagged; nothing here is compiled)"
 fi
 
+# ----------------------------------------------------------------- output ---
+# Proven writable, and proven to be the bind mount, before anything expensive
+# happens. If /out is not actually mounted, everything still "succeeds" and
+# then vanishes with the container — which is a very annoying way to spend an
+# afternoon.
+say "checking the output mount"
+mkdir -p "$OUT"
+if grep -q " ${OUT} " /proc/self/mounts; then
+    echo "  ${OUT} is a mount point"
+else
+    echo "  WARNING: ${OUT} is NOT a mount point."
+    echo "  Anything written here dies with the container. Check the -v flag."
+fi
+echo "  writing ${OUT}/.rpmbuild-marker"
+echo "written by tools/rpmbuild.sh" > "$OUT/.rpmbuild-marker"
+echo "  mount entries mentioning ${OUT}:"
+grep " ${OUT} " /proc/self/mounts || echo "    (none)"
+
 # ---------------------------------------------------------------- sources ---
 say "assembling sources"
 mkdir -p "$TOP/SOURCES" "$TOP/SPECS" "$TOP/BUILD" "$TOP/BUILDROOT"
-mkdir -p "$TOP/RPMS" "$TOP/SRPMS" "$OUT"
+mkdir -p "$TOP/RPMS" "$TOP/SRPMS"
 
 # The mount is owned by a different uid than the one we run as.
 git config --global --add safe.directory "$SRC"
@@ -123,8 +141,21 @@ else
     rpmbuild "${RPMOPTS[@]}" -ba "$TOP/SPECS/$SPEC_NAME"
 fi
 
-# ------------------------------------------------------------------- output --
-say "collecting"
+# ---------------------------------------------------------------- collect ---
+say "where rpmbuild writes"
+echo "  _topdir:    $(rpm "${RPMOPTS[@]}" --eval '%{_topdir}')"
+echo "  _rpmdir:    $(rpm "${RPMOPTS[@]}" --eval '%{_rpmdir}')"
+echo "  _srcrpmdir: $(rpm "${RPMOPTS[@]}" --eval '%{_srcrpmdir}')"
+echo "  _target_cpu: $(rpm "${RPMOPTS[@]}" --eval '%{_target_cpu}')"
+
+say "what rpmbuild produced"
+echo "  under ${TOP}/RPMS:"
+ls -lR "$TOP/RPMS"
+echo "  under ${TOP}/SRPMS:"
+ls -lR "$TOP/SRPMS"
+
+say "collecting into ${OUT}"
+collected=0
 for f in "$TOP"/RPMS/*/*.rpm "$TOP"/SRPMS/*.rpm; do
     if [ ! -f "$f" ]; then
         continue
@@ -133,7 +164,20 @@ for f in "$TOP"/RPMS/*/*.rpm "$TOP"/SRPMS/*.rpm; do
         *.nosrc.rpm) continue ;;
     esac
     cp -v "$f" "$OUT/"
+    collected=$((collected + 1))
 done
+
+# A build that produces nothing must not exit 0. The previous version skipped
+# silently when the globs matched nothing, so "runs to completion, output looks
+# sane, no artefacts anywhere" was a passing run.
+if [ "$collected" -eq 0 ]; then
+    echo
+    echo "NO RPMS COLLECTED." >&2
+    echo "rpmbuild reported success but left nothing at ${TOP}/RPMS or" >&2
+    echo "${TOP}/SRPMS. The listings above show what is actually there." >&2
+    exit 1
+fi
+echo "  collected ${collected} package(s)"
 
 for r in "$OUT"/*.rpm; do
     if [ ! -f "$r" ]; then
