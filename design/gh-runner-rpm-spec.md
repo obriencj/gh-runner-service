@@ -252,12 +252,42 @@ and a parallel make target would be a second source of truth that nothing
 verifies. `uv` is a local development convenience only and has no part in the
 package build.
 
-**Excludes** (removed in `%install`, so they cannot be run by accident):
+**Excludes** (removed in `%prep`, so they cannot be run by accident):
 
 | File | Reason |
 |---|---|
-| `svc.sh` | Writes a rootful system unit. Actively wrong here. |
 | `bin/installdependencies.sh` | Does not know EL10; deps are baked into the image. |
+| `bin/runsvc.sh`, `bin/systemd.svc.sh.template`, `bin/actions.runner.service.template`, `bin/RunnerService.js` | The rootful system-unit machinery. Actively wrong here. |
+| `bin/darwin.svc.sh.template`, `bin/actions.runner.plist.template`, `bin/macos-run-invoker.js` | macOS service machinery, irrelevant on this platform. |
+
+Note there is no top-level `svc.sh` in current upstream — it was replaced by
+the templates above. An exclude list naming files that no longer exist is a
+`rm -f` that quietly does nothing, so this table is checked on each pin move.
+
+### 4.1 What the bundle actually weighs
+
+216MB compressed, **644MB unpacked**, and the runner itself is the small part:
+
+| Path | Size | Used by |
+|---|---:|---|
+| `externals/node24` | 187 MB | actions declaring `using: node24` |
+| `externals/node20` | 153 MB | actions declaring `using: node20` |
+| `externals/node24_alpine` | 126 MB | node24 actions in a musl job container |
+| `externals/node20_alpine` | 100 MB | node20 actions in a musl job container |
+| `bin/` | 79 MB | `Runner.Listener`, `Worker`, `PluginHost`, .NET runtime |
+
+Four bundled Node runtimes are 88% of the package. **We ship all of them
+anyway.** The `_alpine` pair is 226MB that only matters when a job runs in a
+musl-based container, and dropping them is tempting — but the failure mode is
+an action dying *inside a job container* with an unhelpful missing-interpreter
+error, on some future workflow nobody remembers this decision for. Every file
+removed here is also a deviation to re-justify on each upgrade, against a
+`%prep` that already has to be re-checked (see above).
+
+The size is real and shows up in three places: package size, per-host disk, and
+`%prep` time during a build. The last of those is why the builder image bakes
+its dependencies (§12) — it removed the `rpmbuild -br` round, and with it a
+second unpack of this tree.
 
 **Patches:**
 
