@@ -1,10 +1,13 @@
-# gh-runner — top-level build entry point.
+# gh-runner — development and packaging entry point.
 #
-# Everything is driven from here. The RPM spec's %install calls
-# `make install DESTDIR=%{buildroot}`, so the install tree can be staged and
-# inspected without rpmbuild:
+# This drives development: tests, the local wheel, the container image, pin
+# management, and the RPM build itself.
 #
-#     make install DESTDIR=/tmp/stage && find /tmp/stage -type f
+# It does NOT install anything. The spec's %install is explicit and uses
+# %pyproject_install plus plain `install` commands, so the spec is the single
+# authority on the install layout. To inspect what ships:
+#
+#     make rpm && rpm -qlpv dist/*/*.rpm
 
 NAME          := gh-runner
 SPEC          := $(NAME).spec
@@ -43,7 +46,6 @@ include mk/python.mk
 include mk/container.mk
 include mk/upstream.mk
 include mk/rpm.mk
-include mk/install.mk
 
 ##@ General
 
@@ -55,7 +57,7 @@ help: ## Show this help
 	@echo
 
 .PHONY: all
-all: wheel ## Build everything installable
+all: wheel ## Build the local wheel (the spec does not use this)
 
 .PHONY: check
 check: check-version check-help check-python check-shim check-units check-spec ## Run the full test suite

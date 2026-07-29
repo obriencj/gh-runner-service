@@ -20,18 +20,22 @@ Summary:        Rootless, ephemeral GitHub Actions self-hosted runners
 License:        GPL-3.0-or-later AND MIT
 URL:            https://github.com/obriencj/gh-runner-service
 
-Source0:        https://github.com/actions/runner/releases/download/v%{runner_version}/actions-runner-linux-%{runner_arch}-%{runner_version}.tar.gz
-Source1:        %{name}-%{version}.tar.gz
+# Source0 is this project. Source1 is the upstream runner release bundle,
+# verified against runner_sha256 in %%prep and extracted, never repacked.
+Source0:        %{name}-%{version}.tar.gz
+Source1:        https://github.com/actions/runner/releases/download/v%{runner_version}/actions-runner-linux-%{runner_arch}-%{runner_version}.tar.gz
 
+# Applied to the extracted runner tree, not to this project.
 Patch0:         0001-remove-selfupdate-loop.patch
 
 # Upstream ships a compiled .NET x86-64 payload; there is nothing to rebuild.
 ExclusiveArch:  x86_64
 
-BuildRequires:  make
+# The distro's own Python packaging macros do the wheel build and install.
+# uv is the local development tool (see the Makefile); it deliberately has no
+# part in the package build, which uses only what a stock buildroot provides.
 BuildRequires:  python3-devel
-BuildRequires:  uv
-BuildRequires:  python3-setuptools
+BuildRequires:  pyproject-rpm-macros
 BuildRequires:  systemd-rpm-macros
 
 Requires:       podman >= 5.0
@@ -61,38 +65,89 @@ The VM is the boundary. Do not attach these runners to public repositories.
 
 %prep
 # Verify before extracting. We ship no repacked tarball and no vendored tree.
-echo '%{runner_sha256}  %{SOURCE0}' | sha256sum -c -
+echo '%{runner_sha256}  %{SOURCE1}' | sha256sum -c -
 
-%setup -q -c -T -n %{runner_tree}
-tar -xzf %{SOURCE0}
+%setup -q -n %{name}-%{version}
+
+# The upstream runner unpacks into a subdirectory of our own source tree. It
+# is a payload we install pristine, not something we build.
+mkdir -p %{runner_tree}
+tar -xzf %{SOURCE1} -C %{runner_tree}
 
 # Excluded outright rather than merely unused — see design §4.
 #   svc.sh                     writes a rootful system unit
 #   bin/installdependencies.sh does not know EL10; deps are baked into the image
-rm -f svc.sh bin/installdependencies.sh
+rm -f %{runner_tree}/svc.sh %{runner_tree}/bin/installdependencies.sh
 
-%patch -P 0 -p1
+%patch -P 0 -p1 -d %{runner_tree}
 
-cd %{_builddir}
-%setup -q -D -T -a 1 -n %{name}-%{version}
+
+%generate_buildrequires
+%pyproject_buildrequires
 
 
 %build
-cd %{_builddir}/%{name}-%{version}
-%make_build all
+%pyproject_wheel
 
 
 %install
-cd %{_builddir}/%{name}-%{version}
-%make_install
-%make_build install-runner \
-    DESTDIR=%{buildroot} \
-    RUNNER_TREE=%{_builddir}/%{runner_tree}
+%pyproject_install
 
-# %ghost: the package owns the path and its mode, ships no content, and never
+# --- everything that is not the Python package -----------------------------
+# Installed explicitly here rather than delegated to a make target: the spec
+# is the authority on the install layout, and a parallel `make install` would
+# be a second source of truth that nothing verifies.
+
+# Build context. Baked into the runner image; every file here executes inside
+# the container and never on the host.
+install -d -m0755 %{buildroot}%{_datadir}/%{name}/context
+install -m0644 container/Containerfile \
+    %{buildroot}%{_datadir}/%{name}/Containerfile
+install -m0644 container/context/packages.list \
+    %{buildroot}%{_datadir}/%{name}/context/
+install -m0755 container/context/docker \
+    container/context/entrypoint.sh \
+    container/context/register.sh \
+    %{buildroot}%{_datadir}/%{name}/context/
+
+# Quadlet units. Symlinked into /etc/containers/systemd/users/<uid>/ by %%post,
+# since the uid is not known until then.
+install -d -m0755 %{buildroot}%{_datadir}/%{name}/quadlet
+install -m0644 units/quadlet/gh-runner.build \
+    units/quadlet/gh-runner@.container \
+    %{buildroot}%{_datadir}/%{name}/quadlet/
+
+# Maintenance timers. Ordinary user units, and vendor-owned, so they belong in
+# %%{_userunitdir} (/usr/lib/systemd/user) — /etc/systemd/user is the local
+# administrator's directory and is where `gh-runner-ctl sync` writes its
+# generated drop-ins. Note these are NOT Quadlet types: a .service or .timer
+# placed in the Quadlet directory is silently ignored.
+install -d -m0755 %{buildroot}%{_userunitdir}
+install -m0644 units/user/*.service units/user/*.timer \
+    %{buildroot}%{_userunitdir}/
+
+# Configuration.
+install -d -m0755 %{buildroot}%{_sysconfdir}/%{name}/instances.d
+install -m0644 config/gh-runner.conf \
+    %{buildroot}%{_sysconfdir}/%{name}/gh-runner.conf
+install -m0644 config/example.conf.sample \
+    %{buildroot}%{_sysconfdir}/%{name}/instances.d/example.conf.sample
+
+# %%ghost: the package owns the path and its mode, ships no content, and never
 # touches it on upgrade. Written by `gh-runner-ctl set-credential`.
-install -d -m0755 %{buildroot}%{_sysconfdir}/%{name}
 touch %{buildroot}%{_sysconfdir}/%{name}/credentials
+
+# Instance state root. Home directory of the service account.
+install -d -m0700 %{buildroot}%{_sharedstatedir}/%{name}
+
+# The pristine upstream tree. entrypoint.sh syncs it into each instance's
+# state directory when the .version marker differs — the runner writes into
+# its own root, which is incompatible with RPM ownership.
+install -d -m0755 %{buildroot}%{_prefix}/lib/%{name}
+cp -a %{runner_tree} %{buildroot}%{_prefix}/lib/%{name}/%{runner_version}
+echo '%{runner_version}' > \
+    %{buildroot}%{_prefix}/lib/%{name}/%{runner_version}/.version
+ln -sfn %{runner_version} %{buildroot}%{_prefix}/lib/%{name}/current
 
 
 %pre
@@ -238,12 +293,12 @@ exit 0
 %{_prefix}/lib/%{name}/%{runner_version}/
 %{_prefix}/lib/%{name}/current
 
-%{_sysconfdir}/systemd/user/gh-runner-prune.service
-%{_sysconfdir}/systemd/user/gh-runner-prune.timer
-%{_sysconfdir}/systemd/user/gh-runner-image-refresh.service
-%{_sysconfdir}/systemd/user/gh-runner-image-refresh.timer
-%{_sysconfdir}/systemd/user/gh-runner-version-check.service
-%{_sysconfdir}/systemd/user/gh-runner-version-check.timer
+%{_userunitdir}/gh-runner-prune.service
+%{_userunitdir}/gh-runner-prune.timer
+%{_userunitdir}/gh-runner-image-refresh.service
+%{_userunitdir}/gh-runner-image-refresh.timer
+%{_userunitdir}/gh-runner-version-check.service
+%{_userunitdir}/gh-runner-version-check.timer
 
 %dir %{_sysconfdir}/%{name}
 %dir %{_sysconfdir}/%{name}/instances.d

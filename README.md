@@ -30,12 +30,12 @@ store; they are one trust domain.
 
 | Path | What |
 |---|---|
-| `gh-runner.spec` | Package definition. Holds the upstream pin — the only place it appears. |
-| `Makefile`, `mk/` | Everything is driven from here. `%install` calls `make install`. |
+| `gh-runner.spec` | Package definition and the authority on the install layout. Holds the upstream pin — the only place it appears. |
+| `Makefile`, `mk/` | Development: tests, local wheel, image, pin management, driving `rpmbuild`. Installs nothing. |
 | `src/preoccupied/gh_runner_ctl/` | Host-side control commands, PEP 420 namespace package. |
 | `container/` | `Containerfile` and the build context. Runs *inside* the image. |
 | `units/quadlet/` | Quadlet units. Symlinked into `/etc/containers/systemd/users/<uid>/` by `%post`. |
-| `units/user/` | Ordinary user timers. Quadlet ignores non-Quadlet files, so these must not live in the Quadlet directory. |
+| `units/user/` | Ordinary user timers → `/usr/lib/systemd/user/`. Quadlet ignores non-Quadlet files, so these must not live in the Quadlet directory. |
 | `patches/` | Applied to the upstream tarball. Every one is a standing rebase obligation. |
 | `tests/shim/` | Golden-file tests for the argv rewriting — the highest-risk code here. |
 
@@ -50,9 +50,16 @@ shell.
 ```bash
 make help              # every target, with the current pin
 make check             # version consistency, pytest, shim goldens, unit parse, rpmlint
-make rpm               # fetch Source0, verify the digest, build
-make install DESTDIR=/tmp/stage   # stage the install tree without rpmbuild
+make rpm               # fetch the runner release, verify the digest, build
 make image             # build the runner image locally
+```
+
+The Makefile does not install anything. `%install` in the spec is explicit —
+`%pyproject_install` plus plain `install` commands — so the spec is the single
+authority on the install layout. To see what actually ships:
+
+```bash
+make rpm && rpm -qlpv dist/*/*.rpm
 ```
 
 ### Moving the upstream pin
@@ -88,20 +95,23 @@ cannot drift from what the code actually does. The shipped config files carry
 the same guidance as comments. `make check-help` smoke-tests that every
 command's `--help` renders.
 
-## Build host requirements
+## Two build paths, on purpose
 
-`uv` builds the wheel and stages it into the buildroot; `make rpm` also needs
-`rpm-build` and `python3-setuptools`.
+**The package** builds with the distro's own macros: `%pyproject_wheel` in
+`%build`, `%pyproject_install` in `%install`. A buildroot needs
+`python3-devel`, `pyproject-rpm-macros`, `systemd-rpm-macros`, and `rpm-build`
+— nothing exotic, nothing from outside the distro, no network beyond the
+declared sources.
 
-Everything runs `--no-build-isolation`, because an RPM buildroot has no network
-and uv must use the setuptools that `BuildRequires` already put there rather
-than fetching its own. Using the same flag locally keeps the two paths honest
-about each other.
+**Local development** uses `uv`: `make venv`, `make check-python`, `make wheel`.
+It is faster and manages the test environment, but it is not involved in
+building the RPM, so an EL10 buildroot never needs it. Both paths drive the
+same setuptools backend from the same `pyproject.toml`.
 
-**Verify `uv` is available for the target EL10 buildroot.** If it turns out not
-to be packaged there, `uv build` falls back to `python3 -m build` and
-`uv pip install --prefix` to `python3 -m installer --destdir`, both one-line
-substitutions in `mk/python.mk` and `mk/install.mk`.
+The tradeoff to know about: `make check-python` tests the tree as uv installs
+it, while the RPM ships what `%pyproject_wheel` produces. They should be
+identical — same backend, same metadata — but if you are chasing a packaging
+bug rather than a code bug, reproduce it with `make rpm`, not `make check`.
 
 ## Status
 

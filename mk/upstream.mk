@@ -67,7 +67,7 @@ upgrade-runner: ## Move the upstream pin (V=x.y.z) and re-test the patches
 	echo "next: add a %changelog entry, then 'make rpm'"
 
 .PHONY: sources
-sources: ## Fetch Source0 exactly as the spec declares it, then verify
+sources: ## Fetch Source1 (the runner) exactly as the spec declares it, then verify
 	@mkdir -p $(RPMTOP)/SOURCES
 	@if [ ! -f "$(RPMTOP)/SOURCES/$(RUNNER_TARBALL)" ]; then \
 	    echo "fetching $(RUNNER_URL)"; \

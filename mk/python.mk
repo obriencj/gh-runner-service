@@ -1,8 +1,12 @@
-# The control commands are built and tested with uv.
+# Local development only.
 #
-# --no-build-isolation throughout: an RPM buildroot has no network, so uv must
-# use the setuptools already present as a BuildRequires rather than trying to
-# fetch its own. The same flag keeps local builds honest about that.
+# uv gives a fast edit/test loop here, but it has no part in the package
+# build: the spec uses %pyproject_wheel and %pyproject_install, so an RPM can
+# be built from a stock buildroot with nothing but pyproject-rpm-macros. Both
+# paths drive the same setuptools backend from the same pyproject.toml.
+#
+# The wheel target exists so `make wheel` is available for inspection; the
+# spec does not call it.
 
 UV      ?= uv
 VENV    := $(BUILDDIR)/venv
@@ -38,3 +42,15 @@ lint-python: ## Static checks
 .PHONY: shell
 shell: venv ## Print the activate line for the dev environment
 	@echo "source $(VENV)/bin/activate"
+
+.PHONY: check-help
+check-help: ## Smoke-test that every command's --help renders
+	@PYTHONPATH=src $(PYTHON) -m preoccupied.gh_runner_ctl.cli --help >/dev/null
+	@for c in add show edit rm enable disable sync list status doctor keys \
+	          set-credential check-credential; do \
+	    PYTHONPATH=src $(PYTHON) -m preoccupied.gh_runner_ctl.cli $$c --help >/dev/null \
+	        || { echo "FAIL: gh-runner-ctl $$c --help" >&2; exit 1; }; \
+	done
+	@PYTHONPATH=src $(PYTHON) -m preoccupied.gh_runner_ctl.prune --help >/dev/null
+	@PYTHONPATH=src $(PYTHON) -m preoccupied.gh_runner_ctl.version_check --help >/dev/null
+	@echo "help ok"

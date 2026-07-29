@@ -100,12 +100,12 @@ created by host Podman. The runner *believes* it is nesting; it is not.
 /usr/share/gh-runner/context/          build context (shim, apt manifest)
 /usr/share/gh-runner/quadlet/gh-runner.build
 /usr/share/gh-runner/quadlet/gh-runner@.container
-/etc/systemd/user/gh-runner-prune.service
-/etc/systemd/user/gh-runner-prune.timer
-/etc/systemd/user/gh-runner-image-refresh.service
-/etc/systemd/user/gh-runner-image-refresh.timer
-/etc/systemd/user/gh-runner-version-check.service
-/etc/systemd/user/gh-runner-version-check.timer
+/usr/lib/systemd/user/gh-runner-prune.service
+/usr/lib/systemd/user/gh-runner-prune.timer
+/usr/lib/systemd/user/gh-runner-image-refresh.service
+/usr/lib/systemd/user/gh-runner-image-refresh.timer
+/usr/lib/systemd/user/gh-runner-version-check.service
+/usr/lib/systemd/user/gh-runner-version-check.timer
 /usr/share/gh-runner/context/entrypoint.sh
 /usr/share/gh-runner/context/register.sh
 /usr/share/gh-runner/context/docker            the shim
@@ -147,8 +147,15 @@ scripts, which is what keeps the boundary clean in the other direction.
 `.container`, `.build`, `.volume`, `.network`, `.pod`, `.image`, and `.kube`.
 Anything else placed there — notably a plain `.service` or `.timer` — is
 *silently ignored*, with no error and no generated unit. The maintenance timers
-are ordinary user units and ship in `/etc/systemd/user/`, which is
-package-ownable and needs no per-uid symlinking.
+are ordinary user units and ship in `/usr/lib/systemd/user/` — the *vendor*
+directory (`%{_userunitdir}`), which is package-ownable and needs no per-uid
+symlinking.
+
+`/etc/systemd/user/` is a different thing and is not for package content: it is
+the local administrator's directory, and it is where `gh-runner-ctl sync`
+writes its generated per-instance drop-ins. Shipping vendor units there would
+put RPM-owned files in the administrator's namespace and make a locally
+overridden unit indistinguishable from a packaged one.
 
 ### Package dependencies
 
@@ -224,11 +231,26 @@ are patchable; everything meaningful in container orchestration is inside
 `Runner.Worker` assemblies.
 
 ```
-Source0: actions-runner-linux-x64-%{version}.tar.gz
+Source0: gh-runner-%{version}.tar.gz                          this project
+Source1: actions-runner-linux-x64-%{runner_version}.tar.gz    upstream release
 ```
 
 **Verify, do not vendor.** `%prep` checks the SHA256 against the value in the
 spec and extracts. No repacking.
+
+The two `%global` lines carrying `runner_version` and `runner_sha256` are the
+only place either value appears; the Makefile reads them back rather than
+restating them. `make upgrade-runner V=x.y.z` moves both, and dry-runs the
+patch set against the new tarball before committing to the move.
+
+**The package build uses the distro's own Python macros** — `%pyproject_wheel`
+in `%build`, `%pyproject_install` in `%install` — so an RPM builds from a stock
+buildroot with nothing but `pyproject-rpm-macros`. `%install` then places the
+non-Python files with plain `install` commands. It does not delegate to a
+`make install` target: the spec is the single authority on the install layout,
+and a parallel make target would be a second source of truth that nothing
+verifies. `uv` is a local development convenience only and has no part in the
+package build.
 
 **Excludes** (removed in `%install`, so they cannot be run by accident):
 
@@ -613,7 +635,7 @@ knowledge outside the package.
 Two kinds, and the distinction is load-bearing (§3): the runner image and the
 runner instances are **Quadlet** units in
 `/etc/containers/systemd/users/<uid>/`; the three maintenance timers are
-**ordinary user** units in `/etc/systemd/user/`.
+**ordinary user** units in `/usr/lib/systemd/user/`.
 
 ### `gh-runner.build`
 
@@ -688,7 +710,7 @@ retrying and be visible in `ctl status` as retrying.
 
 ### `gh-runner-prune.timer`
 
-Ordinary user units in `/etc/systemd/user/`, not Quadlet files (§3).
+Ordinary user units in `/usr/lib/systemd/user/`, not Quadlet files (§3).
 
 Every 30 minutes, calling `gh-runner-prune`. It reaps containers, networks, and
 volumes carrying `io.preoccupied.gh-runner.role=job` — the label the shim
@@ -799,8 +821,8 @@ non-overlapping subuid/subgid block. Home is `/var/lib/gh-runner`.
   restorecon -R /var/lib/gh-runner /usr/lib/gh-runner
   ```
 - symlink the **Quadlet** units into `/etc/containers/systemd/users/<uid>/`.
-  The maintenance timers are already installed in `/etc/systemd/user/` and need
-  no symlink (§3).
+  The maintenance timers are already installed in `/usr/lib/systemd/user/` and
+  need no symlink (§3).
 - `systemctl --user -M gh-runner@ enable --now podman.socket`
 - `systemctl --user -M gh-runner@ daemon-reload`
 - Do **not** auto-enable instances. Print a pointer to `gh-runner-ctl`.
