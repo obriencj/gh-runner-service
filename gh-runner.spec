@@ -64,7 +64,7 @@
 
 Name:           gh-runner
 Version:        0.1.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Rootless, ephemeral GitHub Actions self-hosted runners
 
 # Our own files are GPLv3; the bundled upstream runner is MIT.
