@@ -11,6 +11,39 @@
 %global service_uid   987
 %global runner_tree   actions-runner-%{runner_version}
 
+# --- the bundled runner tree is a payload, not something we build ------------
+#
+# /usr/lib/gh-runner/<version> is a vendored, prebuilt .NET tree. RPM's
+# automatic machinery must keep its hands off it entirely:
+#
+# __requires_exclude_from   Without this, the dependency generator scans the
+#                           bundled native libraries and emits Requires on
+#                           libicu.so.74, libssl.so.3 and friends — the Ubuntu
+#                           sonames that exist only inside the runner *image*.
+#                           None of them can be satisfied on AlmaLinux, so the
+#                           package would build cleanly and then be flatly
+#                           uninstallable.
+# __provides_exclude_from   Likewise, we must not advertise the bundled .NET
+#                           sonames to the rest of the system.
+# debug_package / brp_strip Stripping a prebuilt vendor tree corrupts what we
+#                           were asked to ship pristine, and there are no
+#                           sources for a debuginfo package to point at.
+# mangle_shebangs           Upstream's scripts and the bundled node builds
+#                           carry their own interpreters; rewriting them is
+#                           exactly the kind of local deviation §1 forbids.
+%global __requires_exclude_from ^%{_prefix}/lib/%{name}/.*$
+%global __provides_exclude_from ^%{_prefix}/lib/%{name}/.*$
+%global __brp_mangle_shebangs_exclude_from ^%{_prefix}/lib/%{name}/.*$
+%global debug_package %{nil}
+%global __brp_strip %{nil}
+%global __brp_strip_static_archive %{nil}
+%global __brp_strip_comment_note %{nil}
+
+# The payload is ~666MB of already-compressed binaries, where maximum
+# compression costs minutes and saves very little. Trade a slightly larger
+# package for a build that finishes.
+%global _binary_payload w3.zstdio
+
 Name:           gh-runner
 Version:        0.1.0
 Release:        1%{?dist}

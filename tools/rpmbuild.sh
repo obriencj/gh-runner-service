@@ -77,19 +77,27 @@ dnf -y builddep --spec "$TOP/SPECS/$SPEC_NAME"
 # knowable from the spec text alone: rpmbuild -br runs the generator, exits 11
 # when something it emitted is unmet, and leaves a .buildreqs.nosrc.rpm saying
 # what. Repeat until it stops asking.
+# Note: each rpmbuild invocation re-runs %prep, which unpacks a 216MB tarball
+# into a 666MB tree. Two invocations is the normal path (-br to learn the
+# dynamic requirements, then -ba to build), so expect that cost twice. Nothing
+# here is backgrounded and nothing sleeps — if it looks stalled, it is doing
+# that extraction.
 for attempt in 1 2 3; do
     rm -f "$TOP"/SRPMS/*.buildreqs.nosrc.rpm
+    echo "  round ${attempt}: rpmbuild -br (runs %prep; this is the slow part)"
     set +e
-    rpmbuild "${RPMOPTS[@]}" -br "$TOP/SPECS/$SPEC_NAME" >/tmp/br.log 2>&1
-    rc=$?
+    # Streamed, not captured. A silent multi-minute phase is indistinguishable
+    # from a hang, and guessing which one you are looking at is not a thing to
+    # ask of whoever runs this.
+    rpmbuild "${RPMOPTS[@]}" -br "$TOP/SPECS/$SPEC_NAME" 2>&1 | sed 's/^/    /'
+    rc=${PIPESTATUS[0]}
     set -e
     if [ $rc -eq 0 ]; then
         echo "  all BuildRequires satisfied"
         break
     fi
     if [ $rc -ne 11 ]; then
-        echo "  rpmbuild -br failed ($rc):" >&2
-        cat /tmp/br.log >&2
+        echo "  rpmbuild -br failed ($rc)" >&2
         exit $rc
     fi
     nosrc=$(ls "$TOP"/SRPMS/*.buildreqs.nosrc.rpm 2>/dev/null | head -1) || true

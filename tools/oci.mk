@@ -17,19 +17,31 @@ RPM_BUILDER  ?= localhost/gh-runner-builder:$(RPM_TAG)
 RPM_OUT      := $(CURDIR)/$(DISTDIR)/$(RPM_TAG)
 RPM_CACHE    := $(CURDIR)/$(BUILDDIR)/cache
 
-# The runner payload is a prebuilt x86-64 .NET tree, so the spec is
-# ExclusiveArch: x86_64 and the build has to happen on that arch. On an
-# aarch64 workstation this runs emulated, which is slower but honest — the
-# alternative, rpmbuild --target, would produce a package nothing had actually
-# resolved dependencies for.
-RPM_PLATFORM ?= linux/amd64
+# Native by default, cross-targeted.
+#
+# The spec is ExclusiveArch: x86_64 because the runner payload is a prebuilt
+# x86-64 tree — but nothing here is *compiled*. The wheel is noarch and the
+# payload is copied verbatim, so `rpmbuild --target x86_64` satisfies
+# ExclusiveArch and tags the package correctly while the container itself runs
+# at native speed.
+#
+# Emulating a full x86-64 userspace to copy 666MB and compress it is minutes of
+# qemu and enough memory pressure to get the build OOM-killed on a default
+# 2GiB podman machine. It buys only one thing: proof that BuildRequires resolve
+# on x86-64 specifically. That is worth checking occasionally, not every build:
+#
+#     make rpm-container RPM_PLATFORM=linux/amd64
+#
+RPM_TARGET   ?= x86_64
+RPM_PLATFORM ?=
+_platform_arg = $(if $(RPM_PLATFORM),--platform $(RPM_PLATFORM),)
 
 ##@ RPM in a container
 
 .PHONY: builder-image
 builder-image: ## Build the EL build environment image
 	$(PODMAN) build \
-	    --platform $(RPM_PLATFORM) \
+	    $(_platform_arg) \
 	    --build-arg BASE=$(RPM_BASE) \
 	    -t $(RPM_BUILDER) \
 	    -f tools/Containerfile.rpmbuild \
@@ -39,7 +51,8 @@ builder-image: ## Build the EL build environment image
 rpm-container: builder-image ## Build the RPM in a clean EL container
 	@mkdir -p $(RPM_OUT) $(RPM_CACHE)
 	$(PODMAN) run --rm \
-	    --platform $(RPM_PLATFORM) \
+	    $(_platform_arg) \
+	    -e RPM_TARGET=$(RPM_TARGET) \
 	    -v $(CURDIR):/src:ro,z \
 	    -v $(RPM_OUT):/out:z \
 	    -v $(RPM_CACHE):/cache:z \
@@ -51,7 +64,8 @@ rpm-container: builder-image ## Build the RPM in a clean EL container
 .PHONY: shell-container
 shell-container: builder-image ## Interactive shell in the build environment
 	$(PODMAN) run --rm -it \
-	    --platform $(RPM_PLATFORM) \
+	    $(_platform_arg) \
+	    -e RPM_TARGET=$(RPM_TARGET) \
 	    -v $(CURDIR):/src:ro,z \
 	    -v $(RPM_OUT):/out:z \
 	    -v $(RPM_CACHE):/cache:z \
