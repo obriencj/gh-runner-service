@@ -38,7 +38,7 @@
 %global __brp_strip_static_archive %{nil}
 %global __brp_strip_comment_note %{nil}
 
-# Disabling debuginfo takes all four. `debug_package %{nil}` alone only
+# Disabling debuginfo takes all four. `debug_package %%{nil}` alone only
 # suppresses the -debuginfo *subpackage*; find-debuginfo still runs and still
 # rewrites the binaries it finds. The extraction step is gated separately, and
 # here it would be chewing on Runner.Listener, Runner.Worker,
