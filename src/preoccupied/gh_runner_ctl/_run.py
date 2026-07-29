@@ -103,18 +103,59 @@ def podman(*args: str, check: bool = True, stdin: str | None = None):
     return run(["podman", *args], check=check, stdin=stdin)
 
 
-def podman_json(*args: str) -> Any:
+def podman_json(*args: str) -> list:
     """
-    Podman with --format json. Empty output is an empty list, not a crash
+    Podman with --format json, always as a list.
+
+    Podman is looser about this than it looks. An empty result may be "",
+    "[]", "null", or "{}" depending on the subcommand and version, and it
+    sometimes prefixes stdout with a warning line. All of those mean "nothing
+    here", not "the tool is broken", so none of them raise.
     """
 
-    out = podman(*args, "--format", "json").stdout.strip()
-    if not out:
+    proc = podman(*args, "--format", "json")
+    out = proc.stdout.strip()
+
+    if not out or out == "null":
         return []
+
+    # Podman occasionally writes a WARN/INFO line to stdout rather than
+    # stderr. Find the first *line* that opens a JSON document, not the first
+    # bracket character -- "WARN[0000]" has a bracket four characters in, and
+    # slicing there produces garbage.
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith(("[", "{")):
+            out = "\n".join(lines[i:])
+            break
+    else:
+        raise CtlError(
+            f"`podman {' '.join(args)}` produced no JSON.\n"
+            f"stdout: {out[:500]!r}\n"
+            f"stderr: {proc.stderr.strip()[:500]!r}"
+        )
+
     try:
-        return json.loads(out)
+        data = json.loads(out)
     except json.JSONDecodeError as exc:
-        raise CtlError(f"could not parse podman output: {exc}") from exc
+        # Include what podman actually said. Reporting only the parser's
+        # complaint hides the one piece of information needed to fix this.
+        raise CtlError(
+            f"could not parse `podman {' '.join(args)}` output: {exc}\n"
+            f"stdout: {out[:500]!r}\n"
+            f"stderr: {proc.stderr.strip()[:500]!r}"
+        ) from exc
+
+    if data is None:
+        return []
+    if isinstance(data, dict):
+        return [data] if data else []
+    if not isinstance(data, list):
+        raise CtlError(
+            f"`podman {' '.join(args)}` returned {type(data).__name__}, "
+            f"expected a list: {out[:200]!r}"
+        )
+    return data
 
 
 def daemon_reload() -> None:

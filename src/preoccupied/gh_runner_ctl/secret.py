@@ -105,8 +105,35 @@ def _secrets() -> dict[str, str | None]:
     return out
 
 
+def _inspect(iid: str) -> tuple[bool, str | None]:
+    """
+    (secret exists, its digest label) in one call, via a Go template.
+
+    Deliberately not JSON. `add` and `enable` run this on every invocation and
+    have no business depending on podman's output format -- a stray warning
+    line on stdout was enough to break `enable` outright. Exit status answers
+    "does it exist" and the template answers "what digest", neither of which
+    can be derailed by prose.
+    """
+
+    proc = podman(
+        "secret", "inspect", secret_name(iid),
+        "--format", "{{index .Spec.Labels \"" + _LABEL + "\"}}",
+        check=False,
+    )
+    if proc.returncode != 0:
+        return False, None
+
+    out = proc.stdout.strip()
+    # An unlabelled secret -- created by hand, or by a version that did not
+    # label them. Exists, but its contents cannot be compared.
+    if not out or out == "<no value>":
+        return True, None
+    return True, out
+
+
 def secret_exists(iid: str) -> bool:
-    return secret_name(iid) in _secrets()
+    return _inspect(iid)[0]
 
 
 def sync(iid: str) -> bool:
@@ -117,11 +144,14 @@ def sync(iid: str) -> bool:
     value = read_credential(iid)
     want = _digest(value)
     name = secret_name(iid)
-    known = _secrets()
 
-    if name in known:
-        if known[name] == want:
+    exists, have = _inspect(iid)
+    if exists:
+        if have == want:
             return False
+        # Different, or unlabelled and therefore unknowable. podman cannot
+        # update a secret in place, so replace it. A running container keeps
+        # the old value until its next job boundary.
         podman("secret", "rm", name, check=False)
 
     podman(
