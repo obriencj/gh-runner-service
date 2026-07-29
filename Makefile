@@ -11,14 +11,14 @@ SPEC          := $(NAME).spec
 
 PYTHON        ?= python3
 PODMAN        ?= podman
-SCDOC         ?= scdoc
+UV            ?= uv
 
 DESTDIR       ?=
 PREFIX        ?= /usr
 SYSCONFDIR    ?= /etc
 LOCALSTATEDIR ?= /var
 
-BUILDDIR      := build
+BUILDDIR      := _build
 DISTDIR       := dist
 RPMTOP        := $(CURDIR)/$(BUILDDIR)/rpm
 
@@ -33,7 +33,7 @@ VERSION        := $(shell awk '/^Version:/ {print $$2}' $(SPEC))
 RUNNER_TARBALL := actions-runner-linux-$(RUNNER_ARCH)-$(RUNNER_VERSION).tar.gz
 RUNNER_URL     := https://github.com/actions/runner/releases/download/v$(RUNNER_VERSION)/$(RUNNER_TARBALL)
 
-export NAME SPEC PYTHON PODMAN SCDOC DESTDIR PREFIX SYSCONFDIR LOCALSTATEDIR
+export NAME SPEC PYTHON PODMAN UV DESTDIR PREFIX SYSCONFDIR LOCALSTATEDIR
 export BUILDDIR DISTDIR RPMTOP VERSION
 export RUNNER_VERSION RUNNER_SHA256 RUNNER_ARCH RUNNER_TARBALL RUNNER_URL
 
@@ -55,10 +55,10 @@ help: ## Show this help
 	@echo
 
 .PHONY: all
-all: wheel man ## Build everything installable
+all: wheel ## Build everything installable
 
 .PHONY: check
-check: check-version check-python check-shim check-units check-spec ## Run the full test suite
+check: check-version check-help check-python check-shim check-units check-spec ## Run the full test suite
 
 .PHONY: clean
 clean: ## Remove build output

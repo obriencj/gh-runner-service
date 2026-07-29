@@ -1,6 +1,6 @@
 [Unit]
 Description=Check the runner version against the upstream floor
-Documentation=man:gh-runner-ctl(8)
+Documentation=https://github.com/obriencj/gh-runner-service
 
 [Service]
 Type=oneshot

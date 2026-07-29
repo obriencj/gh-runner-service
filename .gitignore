@@ -1,8 +1,9 @@
-build/
-dist/
 *.egg-info/
-__pycache__/
 *.pyc
-.pytest_cache/
 *.rpm
 *.tar.gz
+.pytest_cache/
+__pycache__/
+_build/
+build/
+dist/

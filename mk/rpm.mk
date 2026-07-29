@@ -33,19 +33,36 @@ rpm: dist sources ## Build the binary RPM
 	@mkdir -p $(DISTDIR)
 	rpmbuild $(RPMBUILD_ARGS) -bb $(SPEC)
 
+# One shell, not two: each recipe line gets its own shell, so an `exit 0`
+# guard on the first line does not stop the second from running.
 .PHONY: check-spec
-check-spec: ## Lint the spec
-	@command -v rpmlint >/dev/null || { echo "rpmlint not installed, skipping"; exit 0; }
-	rpmlint $(SPEC)
+check-spec: ## Lint the spec, and verify it parses
+	@if command -v rpmspec >/dev/null; then \
+	    rpmspec -P $(SPEC) >/dev/null && echo "  ok  spec parses"; \
+	else \
+	    echo "  --  rpmspec not present, skipped"; \
+	fi
+	@if command -v rpmlint >/dev/null; then \
+	    rpmlint $(SPEC); \
+	else \
+	    echo "  --  rpmlint not present, skipped"; \
+	fi
 
+# A missing tool is "skipped", not "failed" — these checks only run on a
+# systemd host, and a red FAIL on a dev laptop trains people to ignore the
+# output entirely.
 .PHONY: check-units
 check-units: ## Verify the systemd and Quadlet units parse
 	@rc=0; \
-	for u in units/user/*.service units/user/*.timer; do \
-	    if systemd-analyze verify --user "$$u" 2>&1 | grep -q .; then \
-	        echo "FAIL $$u"; systemd-analyze verify --user "$$u"; rc=1; \
-	    else echo "  ok  $$u"; fi; \
-	done; \
+	if command -v systemd-analyze >/dev/null; then \
+	    for u in units/user/*.service units/user/*.timer; do \
+	        if systemd-analyze verify --user "$$u" 2>&1 | grep -q .; then \
+	            echo "FAIL $$u"; systemd-analyze verify --user "$$u"; rc=1; \
+	        else echo "  ok  $$u"; fi; \
+	    done; \
+	else \
+	    echo "  --  systemd-analyze not present, unit verify skipped"; \
+	fi; \
 	q=/usr/libexec/podman/quadlet; \
 	if [ -x "$$q" ]; then \
 	    tmp=$$(mktemp -d); cp units/quadlet/* "$$tmp/"; \

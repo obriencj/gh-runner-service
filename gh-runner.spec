@@ -30,13 +30,8 @@ ExclusiveArch:  x86_64
 
 BuildRequires:  make
 BuildRequires:  python3-devel
-BuildRequires:  python3-build
-BuildRequires:  python3-installer
+BuildRequires:  uv
 BuildRequires:  python3-setuptools
-BuildRequires:  python3-wheel
-# scdoc renders the man pages. On EL10 it may come from CRB or EPEL — see
-# README "Build host requirements" before assuming a plain buildroot has it.
-BuildRequires:  scdoc
 BuildRequires:  systemd-rpm-macros
 
 Requires:       podman >= 5.0
@@ -180,7 +175,7 @@ activating it are deliberately separate steps.
     gh-runner-ctl enable 01
 
 First start builds the container image: several minutes, and it needs egress.
-See gh-runner-ctl(8) and gh-runner.conf(5).
+Run `gh-runner-ctl --help` and `gh-runner-ctl keys` for the reference.
 
 EOF
 fi
@@ -233,7 +228,7 @@ exit 0
 # Shared with other packages in the namespace — do not ship an __init__.py.
 %dir %{python3_sitelib}/preoccupied
 %{python3_sitelib}/preoccupied/gh_runner_ctl/
-%{python3_sitelib}/preoccupied.gh_runner_ctl-%{version}.dist-info/
+%{python3_sitelib}/preoccupied_gh_runner_ctl-%{version}.dist-info/
 
 %dir %{_datadir}/%{name}
 %{_datadir}/%{name}/Containerfile
@@ -258,8 +253,6 @@ exit 0
 
 %attr(0700, %{service_user}, %{service_user}) %dir %{_sharedstatedir}/%{name}
 
-%{_mandir}/man8/gh-runner-ctl.8*
-%{_mandir}/man5/gh-runner.conf.5*
 
 
 %changelog

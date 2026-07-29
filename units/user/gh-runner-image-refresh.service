@@ -1,6 +1,6 @@
 [Unit]
 Description=Rebuild the gh-runner container image
-Documentation=man:gh-runner-ctl(8)
+Documentation=https://github.com/obriencj/gh-runner-service
 
 [Service]
 Type=oneshot

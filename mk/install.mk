@@ -20,12 +20,25 @@ pkgconf    := $(SYSCONFDIR)/$(NAME)
 ##@ Install
 
 .PHONY: install
-install: install-python install-container install-units install-config install-man ## Stage the full install tree into DESTDIR
+install: install-python install-container install-units install-config ## Stage the full install tree into DESTDIR
 	@echo "staged $(NAME) $(VERSION) into $(DESTDIR)/"
 
+# --python pins the interpreter uv resolves, which is also the shebang it
+# writes into the console scripts. Without it uv may pick a different
+# interpreter than the one the package will run under.
 .PHONY: install-python
 install-python: wheel
-	$(PYTHON) -m installer --destdir="$(DESTDIR)" --prefix="$(PREFIX)" $(DISTDIR)/*.whl
+	$(UV) pip install \
+	    --python "$(PYTHON)" \
+	    --prefix "$(DESTDIR)$(PREFIX)" \
+	    --no-deps --no-cache --no-build-isolation \
+	    $(DISTDIR)/*.whl
+	@# Installer bookkeeping, not package content. direct_url.json records the
+	@# build host's filesystem path, which has no business in a shipped RPM.
+	rm -f "$(DESTDIR)$(PREFIX)"/lib/python*/site-packages/*.dist-info/INSTALLER \
+	      "$(DESTDIR)$(PREFIX)"/lib/python*/site-packages/*.dist-info/REQUESTED \
+	      "$(DESTDIR)$(PREFIX)"/lib/python*/site-packages/*.dist-info/direct_url.json \
+	      "$(DESTDIR)$(PREFIX)"/lib/python*/site-packages/*.dist-info/uv_cache.json
 
 # The build context: everything here is baked into the runner image and runs
 # *inside* it. Nothing in this directory executes on the host.
@@ -56,11 +69,10 @@ install-config:
 	install -m0644 config/example.conf.sample  "$(DESTDIR)$(pkgconf)/instances.d/example.conf.sample"
 	install -d -m0700 "$(DESTDIR)$(LOCALSTATEDIR)/lib/$(NAME)"
 
-.PHONY: install-man
-install-man: man
-	install -d -m0755 "$(DESTDIR)$(mandir)/man5" "$(DESTDIR)$(mandir)/man8"
-	install -m0644 $(BUILDDIR)/man/gh-runner-ctl.8   "$(DESTDIR)$(mandir)/man8/"
-	install -m0644 $(BUILDDIR)/man/gh-runner.conf.5  "$(DESTDIR)$(mandir)/man5/"
+# No man pages. The reference lives in `gh-runner-ctl --help`, in
+# `gh-runner-ctl keys`, and in the comments of the shipped config files —
+# `keys` prints from the module's own tables, so unlike a man page it cannot
+# drift from the code.
 
 # Only invoked from %install, where RUNNER_TREE points at the extracted
 # upstream tarball. The tree is installed pristine; entrypoint.sh syncs it
@@ -75,9 +87,14 @@ install-runner:
 
 ##@ Docs
 
-.PHONY: man
-man: $(BUILDDIR)/man/gh-runner-ctl.8 $(BUILDDIR)/man/gh-runner.conf.5 ## Render the man pages
-
-$(BUILDDIR)/man/%: man/%.scd
-	@mkdir -p $(BUILDDIR)/man
-	$(SCDOC) < $< > $@
+.PHONY: check-help
+check-help: ## Smoke-test that every command's --help renders
+	@PYTHONPATH=src $(PYTHON) -m preoccupied.gh_runner_ctl.cli --help >/dev/null
+	@for c in add show edit rm enable disable sync list status doctor keys \
+	          set-credential check-credential; do \
+	    PYTHONPATH=src $(PYTHON) -m preoccupied.gh_runner_ctl.cli $$c --help >/dev/null \
+	        || { echo "FAIL: gh-runner-ctl $$c --help" >&2; exit 1; }; \
+	done
+	@PYTHONPATH=src $(PYTHON) -m preoccupied.gh_runner_ctl.prune --help >/dev/null
+	@PYTHONPATH=src $(PYTHON) -m preoccupied.gh_runner_ctl.version_check --help >/dev/null
+	@echo "help ok"

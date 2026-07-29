@@ -91,12 +91,47 @@ def stale_diag(max_age: int) -> list[Path]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="gh-runner-prune",
-        description="Reap job containers, networks, and diagnostics by age.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Reap gh-runner job containers, networks and diagnostics by age.\n\n"
+            "Normally run by gh-runner-prune.timer every 30 minutes."
+        ),
+        epilog="""\
+why age-based, not idle-gated:
+  An earlier form of this no-op'd whenever a Runner.Worker process existed.
+  On a host with several instances and steady traffic there is essentially
+  always one, so the pruner would never run -- failing exactly under the
+  load that makes it necessary. Age is per-object and composes with
+  concurrent jobs: a container stopped two hours ago is garbage regardless
+  of what else is running.
+
+why positive selection:
+  Reaping "everything that is not role=runner" would also reap anything
+  else the service account owns, and would race a job container between
+  create and start. Only objects labelled
+  io.preoccupied.gh-runner.role=job -- stamped by the docker shim at
+  creation -- are touched, and the age floor covers the creation race.
+
+durations:
+  30s, 30m, 2h, 14d, 1w
+""",
     )
-    ap.add_argument("--max-age", default=DEFAULT_MAX_AGE)
-    ap.add_argument("--diag-age", default=DEFAULT_DIAG_AGE)
+    ap.add_argument(
+        "--max-age",
+        default=DEFAULT_MAX_AGE,
+        metavar="DUR",
+        help=f"containers and networks stopped longer than this (default {DEFAULT_MAX_AGE})",
+    )
+    ap.add_argument(
+        "--diag-age",
+        default=DEFAULT_DIAG_AGE,
+        metavar="DUR",
+        help=f"_diag files older than this (default {DEFAULT_DIAG_AGE})",
+    )
     ap.add_argument("--images", action="store_true", help="also prune dangling images")
-    ap.add_argument("-n", "--dry-run", action="store_true")
+    ap.add_argument(
+        "-n", "--dry-run", action="store_true", help="report without removing anything"
+    )
     args = ap.parse_args(argv)
 
     try:

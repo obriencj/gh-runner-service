@@ -72,14 +72,42 @@ def releases_behind(current: str, releases: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="gh-runner-version-check",
-        description="Warn when the pinned runner falls behind upstream.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Warn when the installed runner falls behind upstream.\n\n"
+            "Normally run daily by gh-runner-version-check.timer."
+        ),
+        epilog="""\
+why this exists:
+  --disableupdate means the runner never self-updates, and GitHub eventually
+  refuses registration from runners below a floor it moves without notice.
+  The failure presents as every instance simultaneously failing to register
+  -- a confusing outage if nothing has been watching the version. This turns
+  it into a journal warning weeks earlier.
+
+  It reports only, and never updates anything. Shipping a new package is a
+  human decision: on the build host, `make upgrade-runner V=<version>`.
+
+exit status:
+  0  current enough, or GitHub was unreachable (a transient network failure
+     must not turn a daily timer into a daily failed unit)
+  1  behind by --warn-releases or more
+  2  no installed runner found
+""",
     )
     ap.add_argument(
         "--current",
+        metavar="VERSION",
         help="version to check (default: read /usr/lib/gh-runner/current/.version)",
     )
-    ap.add_argument("--warn-releases", type=int, default=DEFAULT_WARN_RELEASES)
-    ap.add_argument("-q", "--quiet", action="store_true")
+    ap.add_argument(
+        "--warn-releases",
+        type=int,
+        default=DEFAULT_WARN_RELEASES,
+        metavar="N",
+        help=f"warn at this many releases behind (default {DEFAULT_WARN_RELEASES})",
+    )
+    ap.add_argument("-q", "--quiet", action="store_true", help="only speak on warning")
     args = ap.parse_args(argv)
 
     current = args.current or installed_version()

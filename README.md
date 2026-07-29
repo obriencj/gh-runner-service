@@ -72,12 +72,36 @@ Our own version is separate from the pin and moves with `make bump-version
 V=x.y.z`, which updates the spec and the Python package together. `make
 check-version` fails the build if they drift.
 
+## Documentation
+
+No man pages. The reference is the CLI itself:
+
+```bash
+gh-runner-ctl --help          # commands, files, the security caveat
+gh-runner-ctl keys            # every config key, what it does, where it goes
+gh-runner-ctl disable --help  # per-command detail, including the traps
+gh-runner-ctl doctor          # check the things that fail silently
+```
+
+`keys` prints from the module's own routing tables, so unlike a man page it
+cannot drift from what the code actually does. The shipped config files carry
+the same guidance as comments. `make check-help` smoke-tests that every
+command's `--help` renders.
+
 ## Build host requirements
 
-`make rpm` needs `rpm-build`, `python3-build`, `python3-installer`, and
-`scdoc`. **Verify `scdoc` is available on the target EL10 buildroot** — it may
-come from CRB or EPEL. If it turns out not to be packaged there, the fallback
-is to commit the generated roff and drop the build dependency.
+`uv` builds the wheel and stages it into the buildroot; `make rpm` also needs
+`rpm-build` and `python3-setuptools`.
+
+Everything runs `--no-build-isolation`, because an RPM buildroot has no network
+and uv must use the setuptools that `BuildRequires` already put there rather
+than fetching its own. Using the same flag locally keeps the two paths honest
+about each other.
+
+**Verify `uv` is available for the target EL10 buildroot.** If it turns out not
+to be packaged there, `uv build` falls back to `python3 -m build` and
+`uv pip install --prefix` to `python3 -m installer --destdir`, both one-line
+substitutions in `mk/python.mk` and `mk/install.mk`.
 
 ## Status
 

@@ -113,9 +113,16 @@ created by host Podman. The runner *believes* it is nesting; it is not.
 /usr/bin/gh-runner-ctl
 /usr/bin/gh-runner-prune
 /usr/bin/gh-runner-version-check
-/usr/share/man/man8/gh-runner-ctl.8.gz
-/usr/share/man/man5/gh-runner.conf.5.gz
 ```
+
+**No man pages.** The reference is `gh-runner-ctl --help`, per-command
+`--help`, and `gh-runner-ctl keys`, which prints the config-key reference from
+the module's own routing tables. That is strictly better than a man page for
+this project: the tables are what `sync` and the shim actually consult, so the
+documentation cannot drift from the behaviour, and there is no build-time
+dependency on a doc toolchain that may not be packaged for EL10. The shipped
+config files carry the same guidance as comments, where an operator is already
+looking.
 
 **Python on the host, POSIX shell in the image.** The split is by where a
 thing executes, and there is no `/usr/libexec/gh-runner/`:
@@ -389,7 +396,7 @@ The instance ID is the filename stem and is used consistently as:
 - default runner name — `<hostname>-<id>`
 
 **File format: `KEY=value`, one per line, `#` comments.** No parser to write,
-no format to document beyond a man page, and Quadlet consumes it natively via
+no format to document beyond `gh-runner-ctl keys`, and Quadlet consumes it via
 `EnvironmentFile=` in `[Container]`.
 
 The syntax is **Podman's `--env-file`, not systemd's `EnvironmentFile`** — that
@@ -844,7 +851,7 @@ Accepted, with the mitigation named. Nothing here is an open question.
 | **No inter-instance isolation** | All instances share one Podman store and one uid. Instance 2 can inspect instance 3's job containers. Acceptable only because all instances are one trust domain. Put this in the README. |
 | **Workspace is not ephemeral** | §5.1. The container is fresh per job; `_actions` and `_tool` are not. A compromised job can poison the toolcache for later jobs *on the same instance*. Inside one trust domain this is the same exposure as the shared Podman store; it is listed because the word "ephemeral" invites a stronger reading. |
 | **Storage growth** | Shared image cache is the upside of a persistent host; unbounded growth is the downside. `gh-runner-prune.timer` covers job containers, dangling images, and `_diag`. It does **not** bound `_work/_tool`, which grows with the variety of toolchain versions the workflows ask for. Watch `podman system df` and the instance dirs. |
-| **Quadlet debuggability** | Malformed keys fail silently, as do non-Quadlet files in the Quadlet directory (§3). `/usr/libexec/podman/quadlet -dryrun -user` should be in the man page and in `gh-runner-ctl doctor`. |
+| **Quadlet debuggability** | Malformed keys fail silently, as do non-Quadlet files in the Quadlet directory (§3). `/usr/libexec/podman/quadlet -dryrun -user` is wired into `gh-runner-ctl doctor`. |
 | **podman-remote version skew** | The in-image client and the host engine are separate packages on separate release cadences. A mismatch surfaces as odd API errors mid-job. `PODMAN_REMOTE_VERSION` pins it, and `ctl doctor` compares client and server versions. |
 
 ---
