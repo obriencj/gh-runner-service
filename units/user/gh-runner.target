@@ -13,8 +13,14 @@ Documentation=https://github.com/obriencj/gh-runner-service
 # PartOf=gh-runner.target in gh-runner@.container -- a target does NOT stop
 # the units it merely Wants.
 #
-# The maintenance timers are deliberately not part of this. Pruning and
-# version checks should keep working while the runners are stopped.
+# The maintenance timers are part of this too: stopping gh-runner should leave
+# the whole thing inert, not quietly reaping containers on a schedule. They
+# declare both WantedBy= and PartOf=, since PartOf propagates stop and restart
+# but never start.
+#
+# gh-runner-build.service is the one exception. It holds no running process --
+# stopping it accomplishes nothing -- and cycling it would re-run the image
+# build on the next start for no reason.
 
 [Install]
 WantedBy=default.target

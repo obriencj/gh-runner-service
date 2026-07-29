@@ -213,6 +213,9 @@ def cmd_sync(args) -> int:
     for name in units.migrate_wants():
         changed.append(f"moved {name} into {units.WANTS_DIR}")
 
+    for name in units.sync_timers():
+        changed.append(f"enabled {name}")
+
     instances = conf.all_instances()
     for inst in instances:
         if units.sync_dropin(inst):

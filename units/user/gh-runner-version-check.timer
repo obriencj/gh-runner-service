@@ -1,10 +1,12 @@
 [Unit]
 Description=Daily check of the runner version floor
 
+PartOf=gh-runner.target
+
 [Timer]
 OnCalendar=daily
 RandomizedDelaySec=4h
 Persistent=true
 
 [Install]
-WantedBy=timers.target
+WantedBy=gh-runner.target

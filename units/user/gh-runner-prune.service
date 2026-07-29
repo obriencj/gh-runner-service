@@ -1,6 +1,7 @@
 [Unit]
 Description=Reap gh-runner job leftovers
 Documentation=https://github.com/obriencj/gh-runner-service
+PartOf=gh-runner.target
 
 [Service]
 Type=oneshot

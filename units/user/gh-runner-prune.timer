@@ -1,6 +1,8 @@
 [Unit]
 Description=Reap gh-runner job leftovers every 30 minutes
 
+PartOf=gh-runner.target
+
 [Timer]
 OnBootSec=10min
 OnUnitActiveSec=30min
@@ -10,4 +12,4 @@ OnUnitActiveSec=30min
 Persistent=true
 
 [Install]
-WantedBy=timers.target
+WantedBy=gh-runner.target

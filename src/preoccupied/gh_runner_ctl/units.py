@@ -185,6 +185,34 @@ def migrate_wants() -> list[str]:
     return moved
 
 
+#: Shipped in %{_userunitdir}, WantedBy=gh-runner.target. Real unit files,
+#: not generated, so systemctl enable works on these normally.
+TIMERS = (
+    "gh-runner-prune.timer",
+    "gh-runner-image-refresh.timer",
+    "gh-runner-version-check.timer",
+)
+
+
+def sync_timers() -> list[str]:
+    """
+    Enable the maintenance timers.
+
+    Nothing else did. They were shipped and never enabled, so pruning, image
+    refresh and the version-floor check silently never ran. Asked of systemd
+    rather than inferred from a symlink, because `systemctl enable` writes into
+    the account's own config directory, not the one we manage.
+    """
+
+    changed = []
+    for timer in TIMERS:
+        proc = systemctl("is-enabled", timer, check=False)
+        if proc.stdout.strip() != "enabled":
+            systemctl("enable", timer)
+            changed.append(timer)
+    return changed
+
+
 def start_all() -> None:
     systemctl("start", TARGET)
 

@@ -1,6 +1,8 @@
 [Unit]
 Description=Weekly rebuild of the gh-runner container image
 
+PartOf=gh-runner.target
+
 [Timer]
 OnCalendar=Sun 03:00
 RandomizedDelaySec=1h
@@ -10,4 +12,4 @@ RandomizedDelaySec=1h
 Persistent=true
 
 [Install]
-WantedBy=timers.target
+WantedBy=gh-runner.target
