@@ -4,10 +4,14 @@ Control commands for the gh-runner service.
 Host-side only. Everything that runs *inside* the runner container is POSIX
 shell under container/context/, so the image never acquires a Python runtime
 it would only need for three scripts.
+
+author: Christopher O'Brien <obriencj@gmail.com>
+license: GPLv3
 """
 
 import os
 from pathlib import Path
+
 
 __version__ = "0.1.0"
 
@@ -41,4 +45,9 @@ QUADLET_USER_DIR = _p("etc/containers/systemd/users")
 
 
 class CtlError(Exception):
-    """Operator-facing failure. cli.main prints these without a traceback."""
+    """
+    Operator-facing failure. cli.main prints these without a traceback
+    """
+
+
+# The end.

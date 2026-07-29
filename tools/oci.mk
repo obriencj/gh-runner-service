@@ -95,3 +95,6 @@ clean-container: ## Remove the builder image, its stamp, and cached sources
 	-$(PODMAN) rmi $(RPM_BUILDER)
 	rm -f $(BUILDER_STAMP)
 	rm -rf $(RPM_CACHE)
+
+
+# The end.

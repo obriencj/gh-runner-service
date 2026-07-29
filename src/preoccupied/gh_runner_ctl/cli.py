@@ -81,6 +81,7 @@ def cmd_rm(args) -> int:
     inst.path.unlink(missing_ok=True)
     units.prune_orphan_dropins({i.iid for i in conf.all_instances()})
     units.reload()
+
     if args.purge:
         import shutil
 
@@ -555,3 +556,6 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# The end.

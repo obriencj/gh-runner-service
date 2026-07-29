@@ -20,6 +20,7 @@ import urllib.request
 
 from . import RUNNER_TEMPLATE
 
+
 RELEASES_URL = "https://api.github.com/repos/actions/runner/releases"
 DEFAULT_WARN_RELEASES = 2
 
@@ -146,3 +147,6 @@ exit status:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# The end.

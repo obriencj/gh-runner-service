@@ -51,12 +51,18 @@ _INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 def valid_instance_id(iid: str) -> bool:
-    """The id is a filename stem, a systemd instance, and a container name."""
+    """
+    The id is a filename stem, a systemd instance, and a container name
+    """
+
     return bool(_INSTANCE_ID_RE.match(iid))
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
-    """Parse one file using Podman's --env-file rules."""
+    """
+    Parse one file using Podman's --env-file rules
+    """
+
     values: dict[str, str] = {}
     if not path.exists():
         return values
@@ -79,7 +85,10 @@ def parse_env_file(path: Path) -> dict[str, str]:
 
 
 def lint_env_file(path: Path) -> list[str]:
-    """Warnings for things Podman will accept and misinterpret."""
+    """
+    Warnings for things Podman will accept and misinterpret
+    """
+
     warnings: list[str] = []
     for lineno, raw in enumerate(path.read_text().splitlines(), 1):
         line = raw.strip()
@@ -102,7 +111,9 @@ def lint_env_file(path: Path) -> list[str]:
 
 @dataclass
 class Instance:
-    """One runner, derived entirely from its conf file plus the defaults."""
+    """
+    One runner, derived entirely from its conf file plus the defaults
+    """
 
     iid: str
     path: Path
@@ -133,7 +144,10 @@ class Instance:
         }
 
     def classify(self) -> dict[str, dict[str, str]]:
-        """Split the merged values by where each key actually goes."""
+        """
+        Split the merged values by where each key actually goes
+        """
+
         out = {"runtime": {}, "job": {}, "unit": {}, "unknown": {}}
         for key, value in sorted(self.values.items()):
             if key in UNIT_SHAPING:
@@ -152,7 +166,10 @@ def instance_path(iid: str) -> Path:
 
 
 def load(iid: str) -> Instance:
-    """Global defaults first, instance file wins."""
+    """
+    Global defaults first, instance file wins
+    """
+
     if not valid_instance_id(iid):
         raise CtlError(f"invalid instance id: {iid!r}")
     path = instance_path(iid)
@@ -172,7 +189,10 @@ def _default_name(iid: str) -> str:
 
 
 def all_instances() -> list[Instance]:
-    """Every *.conf in instances.d. The sample is .conf.sample and is skipped."""
+    """
+    Every *.conf in instances.d. The sample is .conf.sample and is skipped
+    """
+
     if not INSTANCES_DIR.is_dir():
         return []
     return [load(p.stem) for p in sorted(INSTANCES_DIR.glob("*.conf"))]
@@ -205,12 +225,15 @@ RUNNER_LABELS={labels}
 
 
 def scaffold(
-    iid: str,
-    url: str,
-    labels: str,
-    name: str | None = None,
-    group: str | None = None,
-) -> str:
+        iid: str,
+        url: str,
+        labels: str,
+        name: str | None = None,
+        group: str | None = None) -> str:
+    """
+    Generate a scaffold conf file for a new instance
+    """
+
     return SCAFFOLD.format(
         iid=iid,
         url=url,
@@ -218,3 +241,6 @@ def scaffold(
         name_line=(f"RUNNER_NAME={name}" if name else "#RUNNER_NAME=  # default: <hostname>-<id>"),
         group_line=(f"RUNNER_GROUP={group}" if group else "#RUNNER_GROUP=default"),
     )
+
+
+# The end.

@@ -7,6 +7,7 @@ name = "preoccupied.gh-runner-ctl"
 description = "Control commands for the gh-runner service"
 readme = "README.md"
 requires-python = ">=3.12"
+
 # PEP 621 table form, not the PEP 639 SPDX string. EL10 ships setuptools
 # 69, which rejects the string outright — and the RPM's License: field is
 # the authoritative one anyway.
@@ -32,6 +33,11 @@ test = ["pytest>=8"]
 
 [tool.setuptools.dynamic]
 version = { attr = "preoccupied.gh_runner_ctl.__version__" }
+
+# project.license-files is PEP 639 / setuptools>=77. Use the tool table so
+# EL10's setuptools 69 still accepts this.
+[tool.setuptools]
+license-files = ["LICENSE"]
 
 # PEP 420 implicit namespace: src/preoccupied/ has no __init__.py, so this
 # package can share the namespace with the rest of preoccupied.*

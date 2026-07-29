@@ -23,7 +23,10 @@ def is_draining(inst: Instance) -> bool:
 
 
 def mark(inst: Instance) -> bool:
-    """Ask the instance to stop at its next job boundary."""
+    """
+    Ask the instance to stop at its next job boundary
+    """
+
     if is_draining(inst):
         return False
     inst.state_dir.mkdir(parents=True, exist_ok=True)
@@ -39,3 +42,6 @@ def clear(inst: Instance) -> bool:
         return False
     inst.drain_marker.unlink()
     return True
+
+
+# The end.

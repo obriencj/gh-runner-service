@@ -36,7 +36,7 @@ def check_account() -> tuple[bool, str]:
 
 
 def check_linger() -> tuple[bool, str]:
-    p = Path(f"/var/lib/systemd/linger/gh-runner")
+    p = Path("/var/lib/systemd/linger/gh-runner")
     if p.exists():
         return True, ""
     return False, "linger is off; run: loginctl enable-linger gh-runner"
@@ -200,3 +200,6 @@ def report() -> int:
     print()
     print(f"{len(results) - failed} passed, {failed} failed")
     return 1 if failed else 0
+
+
+# The end.

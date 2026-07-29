@@ -18,7 +18,7 @@ import stat
 from . import CREDENTIALS, SECRET_NAME, CtlError
 from ._run import podman, podman_json
 
-_LABEL = "io.preoccupied.gh-runner.digest"
+_LABEL = "net.preoccupied.gh-runner.digest"
 
 
 def read_credential() -> str:
@@ -62,11 +62,15 @@ def current_digest() -> str | None:
 
 
 def exists() -> bool:
-    return any(e.get("Name") == SECRET_NAME for e in podman_json("secret", "ls"))
+    return any(e.get("Name") == SECRET_NAME
+               for e in podman_json("secret", "ls"))
 
 
 def sync() -> bool:
-    """Make the podman secret match the file. True if it changed."""
+    """
+    Make the podman secret match the file. True if it changed
+    """
+
     value = read_credential()
     want = _digest(value)
 
@@ -85,3 +89,6 @@ def sync() -> bool:
         stdin=value,
     )
     return True
+
+
+# The end.

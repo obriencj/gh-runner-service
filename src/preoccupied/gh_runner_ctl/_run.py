@@ -41,9 +41,13 @@ def _user_env() -> dict[str, str]:
 
 
 def as_service_user(argv: list[str]) -> list[str]:
-    """Wrap argv so it runs as the service account with a usable session."""
+    """
+    Wrap argv so it runs as the service account with a usable session
+    """
+
     if os.geteuid() == service_uid():
         return argv
+
     if os.geteuid() != 0:
         raise CtlError(
             "must run as root or as the gh-runner service account "
@@ -54,13 +58,21 @@ def as_service_user(argv: list[str]) -> list[str]:
     return [runuser, "-u", SERVICE_USER, "--", "env", *env, *argv]
 
 
-def run(
-    argv: list[str],
-    *,
-    user: bool = True,
-    check: bool = True,
-    stdin: str | None = None,
-) -> subprocess.CompletedProcess:
+def run(argv: list[str],
+        *,
+        user: bool = True,
+        check: bool = True,
+        stdin: str | None = None) -> subprocess.CompletedProcess:
+    """
+    Run a command as the service account with a usable session.
+
+    Args:
+        argv: The command to run.
+        user: Whether to run as the service account.
+        check: Whether to raise an error if the command fails.
+        stdin: The stdin to pass to the command.
+    """
+
     cmd = as_service_user(argv) if user else argv
     proc = subprocess.run(
         cmd,
@@ -85,7 +97,10 @@ def podman(*args: str, check: bool = True, stdin: str | None = None):
 
 
 def podman_json(*args: str) -> Any:
-    """Podman with --format json. Empty output is an empty list, not a crash."""
+    """
+    Podman with --format json. Empty output is an empty list, not a crash
+    """
+
     out = podman(*args, "--format", "json").stdout.strip()
     if not out:
         return []
@@ -97,3 +112,6 @@ def podman_json(*args: str) -> Any:
 
 def daemon_reload() -> None:
     systemctl("daemon-reload")
+
+
+# The end.
