@@ -34,10 +34,22 @@
 %global __requires_exclude_from ^%{_prefix}/lib/%{name}/.*$
 %global __provides_exclude_from ^%{_prefix}/lib/%{name}/.*$
 %global __brp_mangle_shebangs_exclude_from ^%{_prefix}/lib/%{name}/.*$
-%global debug_package %{nil}
 %global __brp_strip %{nil}
 %global __brp_strip_static_archive %{nil}
 %global __brp_strip_comment_note %{nil}
+
+# Disabling debuginfo takes all four. `debug_package %{nil}` alone only
+# suppresses the -debuginfo *subpackage*; find-debuginfo still runs and still
+# rewrites the binaries it finds. The extraction step is gated separately, and
+# here it would be chewing on Runner.Listener, Runner.Worker,
+# Runner.PluginHost and createdump — prebuilt vendor binaries with no matching
+# sources, which we are meant to ship byte-for-byte.
+%global debug_package %{nil}
+%global __debug_package %{nil}
+%global __debug_install_post %{nil}
+%global _enable_debug_packages 0
+%undefine _debugsource_packages
+%undefine _debuginfo_subpackages
 
 # The payload is ~666MB of already-compressed binaries, where maximum
 # compression costs minutes and saves very little. Trade a slightly larger
