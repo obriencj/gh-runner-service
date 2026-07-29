@@ -31,9 +31,15 @@
 # mangle_shebangs           Upstream's scripts and the bundled node builds
 #                           carry their own interpreters; rewriting them is
 #                           exactly the kind of local deviation §1 forbids.
+# brp_check_rpaths          The .NET binaries carry $ORIGIN RPATHs, which
+#                           check-rpaths treats as an error and aborts the
+#                           build over. It is the right check for something we
+#                           compiled and the wrong one for a vendor payload we
+#                           are forbidden from modifying.
 %global __requires_exclude_from ^%{_prefix}/lib/%{name}/.*$
 %global __provides_exclude_from ^%{_prefix}/lib/%{name}/.*$
 %global __brp_mangle_shebangs_exclude_from ^%{_prefix}/lib/%{name}/.*$
+%global __brp_check_rpaths %{nil}
 %global __brp_strip %{nil}
 %global __brp_strip_static_archive %{nil}
 %global __brp_strip_comment_note %{nil}
@@ -336,7 +342,7 @@ exit 0
 # Shared with other packages in the namespace — do not ship an __init__.py.
 %dir %{python3_sitelib}/preoccupied
 %{python3_sitelib}/preoccupied/gh_runner_ctl/
-%{python3_sitelib}/preoccupied_gh_runner_ctl-%{version}.dist-info/
+%{python3_sitelib}/preoccupied.gh_runner_ctl-%{version}.dist-info/
 
 %dir %{_datadir}/%{name}
 %{_datadir}/%{name}/Containerfile

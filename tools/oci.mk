@@ -69,7 +69,7 @@ builder-image: $(BUILDER_STAMP) ## Build the EL build environment image if stale
 .PHONY: rpm-container
 rpm-container: $(BUILDER_STAMP) ## Build the RPM in a clean EL container
 	@mkdir -p $(RPM_OUT) $(RPM_CACHE)
-	$(PODMAN) run --rm \
+	$(PODMAN) run --rm -it \
 	    $(_platform_arg) \
 	    -e RPM_TARGET=$(RPM_TARGET) \
 	    -v $(CURDIR):/src:ro,z \
