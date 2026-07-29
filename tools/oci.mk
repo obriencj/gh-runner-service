@@ -3,7 +3,9 @@
 # The package targets EL10, which is not what anyone develops on. Rather than
 # maintain a "works on my machine" build, the RPM is produced inside a clean
 # base image — which is also the only way to find out whether the spec's
-# BuildRequires are actually satisfiable there.
+# BuildRequires are actually satisfiable there — the builder image installs
+# them from a stock EL repo set, so `make builder-image` failing is itself the
+# answer to "can this be built on the target".
 #
 #     make rpm-container                  # almalinux:10, the default target
 #     make rpm-container RPM_BASE=...     # any EL/Fedora base
@@ -48,7 +50,7 @@ builder-image: ## Build the EL build environment image
 	    tools
 
 .PHONY: rpm-container
-rpm-container: builder-image ## Build the RPM in a clean EL container
+rpm-container: ## Build the RPM in a clean EL container
 	@mkdir -p $(RPM_OUT) $(RPM_CACHE)
 	$(PODMAN) run --rm \
 	    $(_platform_arg) \

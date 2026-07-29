@@ -1,24 +1,44 @@
 # Build environment for producing the RPM.
 #
-# This holds only the tooling needed to *drive* a build — rpmbuild, the
-# builddep plugin, git, curl. The package's own BuildRequires are resolved
-# inside the container at build time from the spec, so this image does not go
-# stale when they change, and a missing BuildRequires fails where it should:
-# in the build, not silently because the image happened to have it.
+# Everything the build needs is installed here, once, at image build time.
+# tools/rpmbuild.sh installs nothing: it assembles sources and calls rpmbuild.
+#
+# That is not just tidiness. Resolving dependencies at run time meant a
+# `dnf builddep --spec` pass plus an `rpmbuild -br` round to discover what
+# %generate_buildrequires emits -- and -br runs %prep, which unpacks a 216MB
+# tarball into a 666MB tree. Baking the list removes three or four repeated
+# dnf transactions per run and halves the unpacking.
+#
+# The cost is that this list has to track the spec's BuildRequires, including
+# what %pyproject_buildrequires derives from pyproject.toml's build-system
+# requires. When it drifts, rpmbuild says so plainly -- "Failed build
+# dependencies: ..." -- and the fix is to add the line here and re-run
+# `make builder-image`.
 ARG BASE=docker.io/library/almalinux:10
 FROM ${BASE}
 
+# CRB carries some of the -devel and macro packages on EL. Tolerated where it
+# does not exist, so a Fedora base still works.
 RUN dnf -y install dnf-plugins-core \
     && (dnf config-manager --set-enabled crb 2>/dev/null \
         || dnf config-manager --enable crb 2>/dev/null \
         || echo "no crb repo on this base, continuing") \
     && dnf -y install \
-         'dnf-command(builddep)' \
          rpm-build \
          rpmdevtools \
          git-core \
          curl \
          ca-certificates \
+         tar \
+         gzip \
+         xz \
+         zstd \
+         python3-devel \
+         python3-setuptools \
+         python3-wheel \
+         python3-pip \
+         pyproject-rpm-macros \
+         systemd-rpm-macros \
     && dnf clean all
 
 WORKDIR /work

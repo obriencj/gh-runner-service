@@ -7,15 +7,17 @@
 # leave build residue behind or pick up a stale artefact from a previous run.
 #
 # DELIBERATELY BORING. No pipes, no redirects, no background jobs, no sleeps,
-# no retries, no output capture. Every command runs in the foreground and
-# writes straight to the terminal, in order. If this script appears to stall,
-# the last line printed is genuinely what it is doing -- there is nowhere for
-# output to be hiding.
+# no retries, no output capture, and nothing is installed here. Every command
+# runs in the foreground and writes straight to the terminal, in order. If
+# this script appears to stall, the last line printed is genuinely what it is
+# doing -- there is nowhere for output to be hiding.
 #
-# The slow steps, so a pause is never a mystery:
+# Build dependencies live in tools/Containerfile.rpmbuild and are baked into
+# the image. This script only assembles sources and calls rpmbuild once.
+#
+# The two slow steps, so a pause is never a mystery:
 #   - fetching the runner bundle (216MB, once; cached in /cache afterwards)
-#   - each rpmbuild invocation re-runs %prep, which unpacks that bundle into a
-#     666MB tree. Expect that twice: once for -br, once for -ba.
+#   - %prep, which unpacks that bundle into a 666MB tree
 
 set -eu
 
@@ -102,64 +104,19 @@ for p in "$SRC"/patches/*.patch; do
     fi
 done
 
-# ----------------------------------------------------------- buildrequires ---
+# -------------------------------------------------------------------- build --
 # An array, so the value keeps its space instead of splitting into
 # "--define=_topdir" plus a stray path argument.
 RPMOPTS=(--define "_topdir $TOP")
 
-say "resolving static BuildRequires"
-dnf -y builddep --spec "$TOP/SPECS/$SPEC_NAME"
-
-# %generate_buildrequires means the full set is not knowable from the spec
-# text alone. rpmbuild -br runs the generator, exits 11 when something it
-# emitted is unmet, and leaves a .buildreqs.nosrc.rpm saying what. Repeat
-# until it stops asking.
-attempt=1
-while [ "$attempt" -le 3 ]; do
-    for stale in "$TOP"/SRPMS/*.buildreqs.nosrc.rpm; do
-        if [ -f "$stale" ]; then
-            rm -f "$stale"
-        fi
-    done
-
-    say "resolving dynamic BuildRequires (round ${attempt})"
-    echo "  rpmbuild -br runs %prep, which unpacks the 666MB runner tree."
-    echo "  This takes a while and is not stuck."
-
-    if rpmbuild "${RPMOPTS[@]}" -br "$TOP/SPECS/$SPEC_NAME"; then
-        rc=0
-    else
-        rc=$?
-    fi
-
-    if [ "$rc" -eq 0 ]; then
-        echo "  all BuildRequires satisfied"
-        break
-    fi
-
-    if [ "$rc" -ne 11 ]; then
-        echo "rpmbuild -br failed with status ${rc}" >&2
-        exit "$rc"
-    fi
-
-    NOSRC=""
-    for candidate in "$TOP"/SRPMS/*.buildreqs.nosrc.rpm; do
-        if [ -f "$candidate" ]; then
-            NOSRC="$candidate"
-        fi
-    done
-    if [ -z "$NOSRC" ]; then
-        echo "rpmbuild wants more BuildRequires but produced no manifest" >&2
-        exit 1
-    fi
-
-    dnf -y builddep "$NOSRC"
-    attempt=$((attempt + 1))
-done
-
-# -------------------------------------------------------------------- build --
 say "building"
-echo "  %prep runs again here; same 666MB unpack as above."
+echo "  %prep unpacks the 216MB bundle into a 666MB tree. This is the slow"
+echo "  part, it runs exactly once, and it is not stuck."
+echo
+echo "  Build dependencies come from the image, not from here -- if rpmbuild"
+echo "  reports 'Failed build dependencies', add the package to"
+echo "  tools/Containerfile.rpmbuild and re-run 'make builder-image'."
+
 if [ -n "$RPM_TARGET" ]; then
     rpmbuild "${RPMOPTS[@]}" --target "$RPM_TARGET" -ba "$TOP/SPECS/$SPEC_NAME"
 else
