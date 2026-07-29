@@ -57,6 +57,14 @@
 %undefine _debugsource_packages
 %undefine _debuginfo_subpackages
 
+# No /usr/lib/.build-id links either. With debuginfo off they correlate with
+# nothing, and generating them put 43 entries plus the shared .build-id
+# directory itself into the package. It also warns on every build: the three
+# .NET apphosts (Runner.Listener, Runner.Worker, Runner.PluginHost) are
+# identical launcher stubs and legitimately share a build-id, which rpm cannot
+# express as two symlinks of the same name.
+%global _build_id_links none
+
 # The payload is ~666MB of already-compressed binaries, where maximum
 # compression costs minutes and saves very little. Trade a slightly larger
 # package for a build that finishes.
