@@ -128,14 +128,78 @@ def prune_orphan_dropins(known: set[str]) -> bool:
     return changed
 
 
+WANTS_DIR = "default.target.wants"
+
+
+def _wants_link(inst: Instance) -> Path:
+    return SYSTEMD_USER_DIR / WANTS_DIR / inst.unit
+
+
+def fragment_path(inst: Instance) -> str | None:
+    """
+    Where systemd currently loads this unit's definition from.
+
+    For a Quadlet template that is the generated template file, e.g.
+    /run/user/987/systemd/generator/gh-runner@.service. Asked rather than
+    assumed: the generator directory is not ours to hardcode.
+    """
+
+    proc = systemctl("show", inst.unit, "--property=FragmentPath", check=False)
+    for line in proc.stdout.splitlines():
+        key, _, value = line.partition("=")
+        if key == "FragmentPath" and value:
+            return value
+    return None
+
+
+def is_enabled(inst: Instance) -> bool:
+    return _wants_link(inst).is_symlink()
+
+
 def enable(inst: Instance, now: bool = True) -> None:
-    systemctl("enable", inst.unit)
+    """
+    Enable a Quadlet template instance.
+
+    `systemctl enable` cannot do this:
+
+        Failed to enable unit: Unit /run/user/987/systemd/generator/
+        gh-runner@.service is transient or generated
+
+    Quadlet's units are generated, and systemd refuses to enable a generated
+    unit — its own mechanism is the [Install] section in the .container file,
+    which a *template* cannot use per instance because WantedBy= there
+    instantiates nothing without a DefaultInstance.
+
+    So we write what `systemctl enable` would have written for any template
+    unit: a .wants symlink named for the instance, pointing at the template
+    fragment. systemd resolves the dependency from the link's name and loads
+    the unit through its normal search path.
+    """
+
+    frag = fragment_path(inst)
+    if not frag:
+        raise CtlError(
+            f"systemd does not know {inst.unit}.\n"
+            f"Quadlet has not generated it — check `gh-runner-ctl doctor` and "
+            f"that {inst.path.name} is valid, then `gh-runner-ctl sync`."
+        )
+
+    link = _wants_link(inst)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(frag)
+
+    daemon_reload()
     if now:
         systemctl("start", inst.unit)
 
 
 def disable(inst: Instance, now: bool = False) -> None:
-    systemctl("disable", inst.unit, check=False)
+    link = _wants_link(inst)
+    if link.is_symlink() or link.exists():
+        link.unlink()
+        daemon_reload()
     if now:
         systemctl("stop", inst.unit, check=False)
 

@@ -216,7 +216,7 @@ def cmd_list(args) -> int:
     for inst in instances:
         st = units.state(inst)
         active = st.get("ActiveState", "?")
-        enabled = st.get("UnitFileState", "?")
+        enabled = "yes" if units.is_enabled(inst) else "no"
         if drain.is_draining(inst):
             active = "draining"
         pending = "yes" if units.render_dropin(inst) != _current_dropin(inst) else ""
