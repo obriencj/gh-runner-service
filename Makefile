@@ -46,6 +46,7 @@ include mk/python.mk
 include mk/container.mk
 include mk/upstream.mk
 include mk/rpm.mk
+include mk/oci.mk
 
 ##@ General
 

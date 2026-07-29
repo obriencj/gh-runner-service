@@ -2,8 +2,8 @@
 # These two lines are the only place the upstream version and digest appear.
 # The Makefile reads them back rather than restating them; `make upgrade-runner
 # V=x.y.z` moves both and dry-runs the patch set before committing to the move.
-%global runner_version  2.328.0
-%global runner_sha256   0000000000000000000000000000000000000000000000000000000000000000
+%global runner_version  2.336.0
+%global runner_sha256   04cf0be1aff4c3ec3554466c39124ca250e3effd8873bb7e8d68535aa9505d5d
 %global runner_arch     x64
 # ----------------------------------------------------------------------------
 
@@ -74,10 +74,18 @@ echo '%{runner_sha256}  %{SOURCE1}' | sha256sum -c -
 mkdir -p %{runner_tree}
 tar -xzf %{SOURCE1} -C %{runner_tree}
 
-# Excluded outright rather than merely unused — see design §4.
-#   svc.sh                     writes a rootful system unit
-#   bin/installdependencies.sh does not know EL10; deps are baked into the image
-rm -f %{runner_tree}/svc.sh %{runner_tree}/bin/installdependencies.sh
+# Excluded outright rather than merely unused — see design §4. Upstream no
+# longer ships a top-level svc.sh; the rootful-service machinery is now the
+# templates plus runsvc.sh under bin/, and those are what have to go.
+rm -f %{runner_tree}/bin/installdependencies.sh
+rm -f %{runner_tree}/bin/runsvc.sh
+rm -f %{runner_tree}/bin/systemd.svc.sh.template
+rm -f %{runner_tree}/bin/actions.runner.service.template
+rm -f %{runner_tree}/bin/RunnerService.js
+# macOS service machinery, irrelevant on this platform.
+rm -f %{runner_tree}/bin/darwin.svc.sh.template
+rm -f %{runner_tree}/bin/actions.runner.plist.template
+rm -f %{runner_tree}/bin/macos-run-invoker.js
 
 %patch -P 0 -p1 -d %{runner_tree}
 

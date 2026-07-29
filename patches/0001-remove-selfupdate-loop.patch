@@ -1,10 +1,36 @@
-Drop the self-update restart branch from run.sh.
+Fail loudly instead of looping when the runner asks to restart.
 
-With --disableupdate the returnCode == 2 path is dead code. Removing it makes
-an unexpected update attempt fail loudly rather than spin in a restart loop
-that looks like a healthy runner from the outside.
+run.sh treats exit code 2 from run-helper.sh as "self-update completed,
+start again", and loops. This package always passes --disableupdate, so
+that branch is dead code -- and if it ever does fire, something has gone
+wrong in a way that silently looping would hide behind a runner that
+looks healthy from the outside.
 
-PLACEHOLDER: regenerate against the pinned tarball before M3.
-    make upgrade-runner V=<pinned>   # extracts to build/upstream/tree
-    cd build/upstream/tree && cp run.sh run.sh.orig && $EDITOR run.sh
-    diff -u run.sh.orig run.sh > ../../../patches/0001-remove-selfupdate-loop.patch
+Both call sites are patched: run() and runWithManualTrap().
+
+Upstream: actions/runner v2.336.0
+
+--- a/run.sh
++++ b/run.sh
+@@ -18,7 +18,9 @@
+         "$DIR"/run-helper.sh $*
+         returnCode=$?
+         if [[ $returnCode -eq 2 ]]; then
+-            echo "Restarting runner..."
++            echo "Runner requested a restart, but this build is packaged to run" >&2
++            echo "with --disableupdate; there is nothing to restart into." >&2
++            exit 2
+         elif [[ "$ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE" == "1" && $returnCode -eq 7 ]]; then
+             echo "Exiting runner..."
+             exit "$returnCode"
+@@ -44,7 +46,9 @@
+         wait $PID
+         returnCode=$?
+         if [[ $returnCode -eq 2 ]]; then
+-            echo "Restarting runner..."
++            echo "Runner requested a restart, but this build is packaged to run" >&2
++            echo "with --disableupdate; there is nothing to restart into." >&2
++            exit 2
+         elif [[ "$ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE" == "1" && $returnCode -eq 7 ]]; then
+             echo "Exiting runner..."
+             exit "$returnCode"
