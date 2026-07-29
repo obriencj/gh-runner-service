@@ -1,0 +1,8 @@
+create
+--label
+io.preoccupied.gh-runner.role=job
+--label
+io.preoccupied.gh-runner.id=01
+-v
+/var/run/docker.sock:/var/run/docker.sock
+ubuntu:24.04

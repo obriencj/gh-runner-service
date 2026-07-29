@@ -1,0 +1,10 @@
+Drop the self-update restart branch from run.sh.
+
+With --disableupdate the returnCode == 2 path is dead code. Removing it makes
+an unexpected update attempt fail loudly rather than spin in a restart loop
+that looks like a healthy runner from the outside.
+
+PLACEHOLDER: regenerate against the pinned tarball before M3.
+    make upgrade-runner V=<pinned>   # extracts to build/upstream/tree
+    cd build/upstream/tree && cp run.sh run.sh.orig && $EDITOR run.sh
+    diff -u run.sh.orig run.sh > ../../../patches/0001-remove-selfupdate-loop.patch

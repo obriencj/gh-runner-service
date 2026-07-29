@@ -1,0 +1,31 @@
+# Copy to /etc/gh-runner/instances.d/<id>.conf and edit, or run:
+#
+#     gh-runner-ctl add 01 --url https://github.com/OWNER/REPO
+#
+# The <id> is the filename stem, and is used consistently as the systemd
+# instance (gh-runner@01.service), the container name (gh-runner-01), the
+# state directory (/var/lib/gh-runner/01/), and the default runner name
+# (<hostname>-01).
+#
+# Dropping a file here does not start a runner. Activation is a separate
+# step, so config management and activation stay separable:
+#
+#     gh-runner-ctl enable 01
+
+# --- runtime env: read by entrypoint.sh at each container start ---
+RUNNER_URL=https://github.com/OWNER/REPO
+RUNNER_LABELS=alma10,podman,c
+#RUNNER_NAME=                       # default: <hostname>-<id>
+#RUNNER_GROUP=default
+
+# --- job-shaping: read by the shim, applied to each job container ---
+#JOB_MEMORY_MAX=12G
+#JOB_CPUS=4
+
+# --- unit-shaping: needs `gh-runner-ctl sync` plus a restart ---
+#MEMORY_MAX=2G
+#CPU_WEIGHT=100
+
+# Reconfiguration is nearly free: ephemeral runners re-register on every
+# container start, so a label change takes effect when the current job
+# finishes. No config.sh remove, no re-registration dance.

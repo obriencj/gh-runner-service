@@ -1,0 +1,11 @@
+[Unit]
+Description=Rebuild the gh-runner container image
+Documentation=man:gh-runner-ctl(8)
+
+[Service]
+Type=oneshot
+# Pull=newer is set in gh-runner.build, so restarting the build unit is what
+# actually refreshes the base image and the baked apt packages. Running jobs
+# are undisturbed: existing containers keep the image they started with, and
+# instances pick up the new one at their next job boundary.
+ExecStart=/usr/bin/systemctl --user restart gh-runner-build.service

@@ -1,0 +1,56 @@
+[Unit]
+Description=GitHub Actions Runner (%i)
+# Not optional. The mount source below is %t/podman/podman.sock; if the socket
+# unit has not run, that path does not exist and Podman creates a *directory*
+# there, after which the shim's CONTAINER_HOST points at a directory and every
+# docker call inside the runner fails with a message about the wrong thing.
+Requires=podman.socket
+After=podman.socket
+
+[Container]
+Image=gh-runner.build
+ContainerName=gh-runner-%i
+
+# Podman --env-file syntax, not systemd EnvironmentFile syntax. No quoting,
+# no escapes, no expansion. See gh-runner.conf(5).
+EnvironmentFile=/etc/gh-runner/gh-runner.conf
+EnvironmentFile=/etc/gh-runner/instances.d/%i.conf
+
+Environment=RUNNER_ID=%i
+Environment=RUNNER_ROOT=/var/lib/gh-runner/%i
+
+# The identical-path invariant (design §5): host Podman resolves the source
+# side of every -v the runner emits, and the runner emits paths as it sees
+# them inside its own container. Same path both sides is a requirement, not a
+# convenience. No :Z here — it would relabel with this container's private
+# MCS category and lock the sibling job containers out of _work.
+Volume=/var/lib/gh-runner/%i:/var/lib/gh-runner/%i
+Volume=/usr/lib/gh-runner/current:/usr/lib/gh-runner/current:ro
+Volume=%t/podman/podman.sock:/var/run/docker.sock
+
+Secret=gh-runner-token,type=mount,target=/run/secrets/gh-token
+
+Label=io.preoccupied.gh-runner.role=runner
+Label=io.preoccupied.gh-runner.id=%i
+
+# No PodmanArgs=--rm. Quadlet already emits --replace --rm in the generated
+# ExecStart, and --replace is load-bearing: an unclean exit leaves a named
+# container behind, and without it the next start collides on the name.
+
+[Service]
+Restart=always
+RestartSec=5
+
+# The drain mechanism (design §7.3). entrypoint.sh exits 78 when it finds
+# /var/lib/gh-runner/%i/.drain, which lets an instance stop at a job boundary
+# instead of having a running job killed.
+RestartPreventExitStatus=78
+
+# A persistent failure — bad credential, GitHub unreachable — would otherwise
+# trip the default start limit and leave the unit failed, needing a manual
+# reset-failed. A runner that stays down after the outage that caused it has
+# ended is worse than one that keeps retrying visibly.
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=default.target

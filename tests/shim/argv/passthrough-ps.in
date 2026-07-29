@@ -1,0 +1,1 @@
+ps -a --filter label=foo --format {{.ID}}

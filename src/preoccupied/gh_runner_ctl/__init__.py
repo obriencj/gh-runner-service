@@ -1,0 +1,44 @@
+"""
+Control commands for the gh-runner service.
+
+Host-side only. Everything that runs *inside* the runner container is POSIX
+shell under container/context/, so the image never acquires a Python runtime
+it would only need for three scripts.
+"""
+
+import os
+from pathlib import Path
+
+__version__ = "0.1.0"
+
+SERVICE_USER = "gh-runner"
+SECRET_NAME = "gh-runner-token"
+
+#: entrypoint.sh exits with this when it finds a drain marker;
+#: the unit carries RestartPreventExitStatus=78. See design §7.3.
+DRAIN_EXIT = 78
+
+#: Test hook. Every path below is derived from this, so the whole module can
+#: be pointed at a staging tree without touching a real host.
+_ROOT = Path(os.environ.get("GH_RUNNER_ROOT", "/"))
+
+
+def _p(*parts: str) -> Path:
+    return _ROOT.joinpath(*parts)
+
+
+CONF_DIR = _p("etc/gh-runner")
+GLOBAL_CONF = CONF_DIR / "gh-runner.conf"
+INSTANCES_DIR = CONF_DIR / "instances.d"
+CREDENTIALS = CONF_DIR / "credentials"
+
+STATE_ROOT = _p("var/lib/gh-runner")
+RUNNER_TEMPLATE = _p("usr/lib/gh-runner/current")
+
+QUADLET_SRC = _p("usr/share/gh-runner/quadlet")
+SYSTEMD_USER_DIR = _p("etc/systemd/user")
+QUADLET_USER_DIR = _p("etc/containers/systemd/users")
+
+
+class CtlError(Exception):
+    """Operator-facing failure. cli.main prints these without a traceback."""

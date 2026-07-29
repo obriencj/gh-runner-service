@@ -1,0 +1,12 @@
+[Unit]
+Description=Build the GitHub Actions runner image
+
+[Build]
+ImageTag=localhost/gh-runner:latest
+File=/usr/share/gh-runner/Containerfile
+SetWorkingDirectory=/usr/share/gh-runner
+Pull=newer
+Label=io.preoccupied.gh-runner.role=image
+
+[Install]
+WantedBy=default.target

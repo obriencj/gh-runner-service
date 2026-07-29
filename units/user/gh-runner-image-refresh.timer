@@ -1,0 +1,13 @@
+[Unit]
+Description=Weekly rebuild of the gh-runner container image
+
+[Timer]
+OnCalendar=Sun 03:00
+RandomizedDelaySec=1h
+# Without this the build unit's RemainAfterExit=yes means the image is built
+# exactly once, at install. The ephemeral loop then makes everything look
+# fresh — new container every job — while the toolchain inside it ages.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

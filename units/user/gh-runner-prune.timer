@@ -1,0 +1,13 @@
+[Unit]
+Description=Reap gh-runner job leftovers every 30 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+# Age-based, not idle-gated: on a host with several instances and steady
+# traffic there is essentially always a Runner.Worker alive, so an idle gate
+# would never fire — failing exactly under the load that needs it.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,7 @@
+exec
+--workdir
+/x
+job1
+bash
+-c
+echo

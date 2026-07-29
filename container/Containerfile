@@ -1,0 +1,39 @@
+# The runner image. Built once by the gh-runner.build quadlet and refreshed
+# weekly by gh-runner-image-refresh.timer.
+#
+# Base is pinned by TAG, not digest. Digest-pinning is the better instinct in
+# general, but it would make Pull=newer a no-op and silently defeat the
+# refresh timer — the image would look fresh forever while its packages aged.
+FROM docker.io/library/ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Everything the runner or a workflow could need, baked in. See
+# context/packages.list — the manifest is the thing you edit.
+COPY context/packages.list /tmp/packages.list
+RUN apt-get update \
+    && sed -e 's/#.*//' -e '/^\s*$/d' /tmp/packages.list \
+       | xargs apt-get install -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* /tmp/packages.list
+
+# Upstream's config.sh and run.sh refuse to run as root. In this container
+# root is mapped to the unprivileged host service account, so the guard is
+# measuring the wrong thing. One env var, no patch, no rebase cost.
+ENV RUNNER_ALLOW_RUNASROOT=1
+
+# There is no engine here. podman-remote drives the *host* engine over the
+# socket the quadlet mounts at /var/run/docker.sock.
+ENV CONTAINER_HOST=unix:///var/run/docker.sock
+
+# The shim. The runner still emits `-v /var/run/docker.sock:...` from compiled
+# code we cannot patch, but the `docker` it resolves is now ours.
+COPY context/docker /usr/local/bin/docker
+COPY context/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY context/register.sh /usr/local/bin/register.sh
+RUN chmod 0755 /usr/local/bin/docker \
+                /usr/local/bin/entrypoint.sh \
+                /usr/local/bin/register.sh
+
+LABEL io.preoccupied.gh-runner.role=image
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

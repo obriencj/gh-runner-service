@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "preoccupied.gh-runner-ctl"
+description = "Control commands for the gh-runner service"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Christopher O'Brien", email = "obriencj@gmail.com" }]
+dynamic = ["version"]
+
+# Deliberately empty. This runs on the host as root, out of the system
+# interpreter, in %post and in timers. Every dependency added here is one
+# more thing that can fail during an RPM transaction.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/obriencj/gh-runner-service"
+
+[project.scripts]
+gh-runner-ctl = "preoccupied.gh_runner_ctl.cli:main"
+gh-runner-prune = "preoccupied.gh_runner_ctl.prune:main"
+gh-runner-version-check = "preoccupied.gh_runner_ctl.version_check:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.dynamic]
+version = { attr = "preoccupied.gh_runner_ctl.__version__" }
+
+# PEP 420 implicit namespace: src/preoccupied/ has no __init__.py, so this
+# package can share the namespace with the rest of preoccupied.*
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["preoccupied.*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]

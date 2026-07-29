@@ -1,0 +1,3 @@
+version
+--format
+{{.Server.APIVersion}}

@@ -1,0 +1,65 @@
+# Everything the runner image bakes in.
+#
+# The point is that a workflow never installs a toolchain. If a job needs
+# something, it goes here and the image is rebuilt — not into a
+# `run: apt-get install` step that runs on every job forever.
+#
+# One package per line. Comments and blank lines are ignored.
+# `make image-packages` prints the effective list.
+
+# --- runner .NET runtime dependencies (do not remove) ---
+ca-certificates
+libicu74
+libssl3
+libkrb5-3
+zlib1g
+
+# --- the shim's engine client ---
+# Remote client only: there is no engine in this container. A full podman
+# would give the runner a second, empty container store, and every job would
+# silently re-pull its images into a store the host never prunes.
+podman-remote
+
+# --- workflow basics ---
+curl
+wget
+git
+git-lfs
+jq
+openssl
+unzip
+zip
+xz-utils
+tar
+gzip
+locales
+tzdata
+procps
+
+# --- C toolchain ---
+# build-essential is explicit because libc6-dev is a *Recommends* of gcc, not
+# a Depends. With --no-install-recommends a slimmed image otherwise yields a
+# gcc with no stdlib.h.
+build-essential
+clang
+lld
+cmake
+ninja-build
+pkg-config
+autoconf
+automake
+libtool
+bison
+flex
+gdb
+valgrind
+ccache
+
+# --- scripting ---
+python3
+python3-venv
+python3-pip
+
+# NOTE: no nodejs. The runner ships externals/node20 and uses it for every
+# JavaScript action, so a system Node would not be what actually runs
+# actions/checkout — it would just be a second, unused copy.

@@ -1,0 +1,146 @@
+#!/bin/bash
+#
+# docker -> podman-remote shim.
+#
+# The runner shells out to `docker` by name, and this is earlier on PATH than
+# anything else so called. There is no Podman engine in this container: we
+# talk to the *host* user's engine over the socket the Quadlet mounts at
+# /var/run/docker.sock.
+#
+# Three jobs, in order:
+#
+#   1. Strip the hardcoded `-v /var/run/docker.sock:/var/run/docker.sock`.
+#      It lives in ContainerOperationProvider, which is compiled, so it cannot
+#      be patched out upstream. This shim is the whole reason for the design.
+#   2. Label job containers so the pruner can identify what it owns by
+#      positive selection rather than by reaping everything that is not a
+#      runner.
+#   3. Apply JOB_MEMORY_MAX / JOB_CPUS. This is the only point in the
+#      architecture with a job container's command line in hand — the runner
+#      unit's MemoryMax does not reach a sibling container. See design §7.2.
+#
+# Everything else passes through untouched. This is not a Docker emulator;
+# podman-remote already speaks the CLI.
+
+set -uo pipefail
+
+SOCK_PATH="${GH_RUNNER_SOCK_PATH:-/var/run/docker.sock}"
+PODMAN="${GH_RUNNER_PODMAN:-podman-remote}"
+
+# 1 = drop the socket mount (default). 0 = rewrite it, for a workflow that
+# genuinely needs socket access inside the job container.
+DROP_SOCKET="${GH_RUNNER_SHIM_DROP_SOCKET:-1}"
+
+export CONTAINER_HOST="${CONTAINER_HOST:-unix://${SOCK_PATH}}"
+
+# Subcommand groups whose real verb is the *second* positional.
+# Not named GROUPS: that is a bash special variable holding the caller's
+# group ids, and assigning to it does not stick.
+VERB_GROUPS=" network volume image system container pod secret manifest "
+
+is_sock_spec() {
+    case "$1" in
+        "${SOCK_PATH}:"*|"${SOCK_PATH}") return 0 ;;
+        *"source=${SOCK_PATH},"*|*"src=${SOCK_PATH},"*) return 0 ;;
+        *"source=${SOCK_PATH}"|*"src=${SOCK_PATH}") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+out=()
+pos=0
+depth=1
+verb=""
+sub=""
+insert_at=-1
+
+# The subcommand chain is read only from *leading* positionals, before any
+# flag. Without that restriction a flag's value gets miscounted as a verb:
+# in `network create --driver bridge foo`, "bridge" is the value of --driver,
+# and treating it as the second positional puts the injection in the wrong
+# place. Real invocations always lead with the verb chain.
+seen_flag=0
+
+while (( $# )); do
+    arg="$1"
+    case "$arg" in
+        -v|--volume|--mount)
+            seen_flag=1
+            if (( $# < 2 )); then out+=("$arg"); shift; continue; fi
+            if [[ $DROP_SOCKET == 1 ]] && is_sock_spec "$2"; then shift 2; continue; fi
+            out+=("$arg" "$2"); shift 2
+            ;;
+        --volume=*|--mount=*)
+            seen_flag=1
+            if [[ $DROP_SOCKET == 1 ]] && is_sock_spec "${arg#*=}"; then shift; continue; fi
+            out+=("$arg"); shift
+            ;;
+        -*)
+            seen_flag=1
+            out+=("$arg"); shift
+            ;;
+        *)
+            if (( seen_flag == 0 )); then
+                pos=$((pos + 1))
+                if (( pos == 1 )); then
+                    verb="$arg"
+                    case "$VERB_GROUPS" in *" $arg "*) depth=2 ;; esac
+                elif (( pos == 2 )); then
+                    sub="$arg"
+                fi
+            fi
+            out+=("$arg")
+            # Injection goes immediately after the subcommand chain, where
+            # flags are still legal and cannot be mistaken for the image name
+            # or the command being run inside it. Never reorder anything else.
+            if (( seen_flag == 0 && pos == depth && insert_at < 0 )); then
+                insert_at=${#out[@]}
+            fi
+            shift
+            ;;
+    esac
+done
+
+# A global flag before the verb (docker --config /x network create ...) leaves
+# insert_at unset, so we pass through unmodified rather than guess. The runner
+# does not emit that form; if M0 shows otherwise, handle it explicitly.
+
+if (( insert_at < 0 )); then
+    exec "$PODMAN" "${out[@]}"
+fi
+
+action="$verb"
+group=""
+if (( depth == 2 )); then
+    action="$sub"
+    group="$verb"
+fi
+
+inject=()
+case "$group:$action" in
+    ":create"|":run"|"container:create"|"container:run"|"network:create"|"volume:create")
+        inject+=(--label "io.preoccupied.gh-runner.role=job")
+        if [[ -n ${RUNNER_ID:-} ]]; then
+            inject+=(--label "io.preoccupied.gh-runner.id=${RUNNER_ID}")
+        fi
+        ;;
+esac
+
+case "$group:$action" in
+    ":create"|":run"|"container:create"|"container:run")
+        if [[ -n ${JOB_MEMORY_MAX:-} ]]; then inject+=("--memory=${JOB_MEMORY_MAX}"); fi
+        if [[ -n ${JOB_CPUS:-} ]];       then inject+=("--cpus=${JOB_CPUS}"); fi
+        ;;
+esac
+
+if (( ${#inject[@]} == 0 )); then
+    exec "$PODMAN" "${out[@]}"
+fi
+
+exec "$PODMAN" "${out[@]:0:insert_at}" "${inject[@]}" "${out[@]:insert_at}"
+
+# NOTE for M0: the runner calls `docker version --format '{{.Server.APIVersion}}'`
+# at startup and parses the answer. Podman reports its own version rather than a
+# Docker API version like 1.41, and the runner may reject it. If M0 shows that it
+# does, intercept `version` here and answer in Docker's shape. Do not guess the
+# fix before the capture says it is needed.

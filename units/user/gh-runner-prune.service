@@ -1,0 +1,7 @@
+[Unit]
+Description=Reap gh-runner job leftovers
+Documentation=man:gh-runner-ctl(8)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gh-runner-prune --max-age 2h --diag-age 14d --images

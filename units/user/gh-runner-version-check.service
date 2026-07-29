@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the runner version against the upstream floor
+Documentation=man:gh-runner-ctl(8)
+
+[Service]
+Type=oneshot
+# Exit 1 means "behind upstream", which should be visible in the journal
+# without turning a daily timer into a permanently failed unit.
+SuccessExitStatus=1
+ExecStart=/usr/bin/gh-runner-version-check --warn-releases 2
