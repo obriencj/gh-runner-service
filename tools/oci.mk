@@ -32,8 +32,8 @@ builder-image: ## Build the EL build environment image
 	    --platform $(RPM_PLATFORM) \
 	    --build-arg BASE=$(RPM_BASE) \
 	    -t $(RPM_BUILDER) \
-	    -f container/build/Containerfile \
-	    container/build
+	    -f tools/Containerfile.rpmbuild \
+	    tools
 
 .PHONY: rpm-container
 rpm-container: builder-image ## Build the RPM in a clean EL container
@@ -44,7 +44,7 @@ rpm-container: builder-image ## Build the RPM in a clean EL container
 	    -v $(RPM_OUT):/out:z \
 	    -v $(RPM_CACHE):/cache:z \
 	    $(RPM_BUILDER) \
-	    /src/container/build/rpmbuild.sh
+	    /src/tools/rpmbuild.sh
 	@echo
 	@echo "RPMs in $(RPM_OUT)/"
 

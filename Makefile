@@ -21,7 +21,7 @@ PREFIX        ?= /usr
 SYSCONFDIR    ?= /etc
 LOCALSTATEDIR ?= /var
 
-BUILDDIR      := _build
+BUILDDIR      := build
 DISTDIR       := dist
 RPMTOP        := $(CURDIR)/$(BUILDDIR)/rpm
 
@@ -42,11 +42,11 @@ export RUNNER_VERSION RUNNER_SHA256 RUNNER_ARCH RUNNER_TARBALL RUNNER_URL
 
 .DEFAULT_GOAL := help
 
-include mk/python.mk
-include mk/container.mk
-include mk/upstream.mk
-include mk/rpm.mk
-include mk/oci.mk
+include tools/python.mk
+include tools/container.mk
+include tools/upstream.mk
+include tools/rpm.mk
+include tools/oci.mk
 
 ##@ General
 

@@ -7,7 +7,10 @@ name = "preoccupied.gh-runner-ctl"
 description = "Control commands for the gh-runner service"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "GPL-3.0-or-later"
+# PEP 621 table form, not the PEP 639 SPDX string. EL10 ships setuptools
+# 69, which rejects the string outright — and the RPM's License: field is
+# the authoritative one anyway.
+license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "Christopher O'Brien", email = "obriencj@gmail.com" }]
 dynamic = ["version"]
 

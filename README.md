@@ -31,9 +31,9 @@ store; they are one trust domain.
 | Path | What |
 |---|---|
 | `gh-runner.spec` | Package definition and the authority on the install layout. Holds the upstream pin — the only place it appears. |
-| `Makefile`, `mk/` | Development: tests, local wheel, image, pin management, driving `rpmbuild`. Installs nothing. |
+| `Makefile`, `tools/` | Local build machinery: tests, local wheel, pin management, and the containerised `rpmbuild`. Not shipped, not a build dependency. |
 | `src/preoccupied/gh_runner_ctl/` | Host-side control commands, PEP 420 namespace package. |
-| `container/` | `Containerfile` and the build context. Runs *inside* the image. |
+| `container/` | The **runner** image: `Containerfile` plus the build context. Shipped in the RPM; runs inside the runner container. |
 | `units/quadlet/` | Quadlet units. Symlinked into `/etc/containers/systemd/users/<uid>/` by `%post`. |
 | `units/user/` | Ordinary user timers → `/usr/lib/systemd/user/`. Quadlet ignores non-Quadlet files, so these must not live in the Quadlet directory. |
 | `patches/` | Applied to the upstream tarball. Every one is a standing rebase obligation. |

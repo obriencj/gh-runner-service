@@ -1,0 +1,24 @@
+# Build environment for producing the RPM.
+#
+# This holds only the tooling needed to *drive* a build — rpmbuild, the
+# builddep plugin, git, curl. The package's own BuildRequires are resolved
+# inside the container at build time from the spec, so this image does not go
+# stale when they change, and a missing BuildRequires fails where it should:
+# in the build, not silently because the image happened to have it.
+ARG BASE=docker.io/library/almalinux:10
+FROM ${BASE}
+
+RUN dnf -y install dnf-plugins-core \
+    && (dnf config-manager --set-enabled crb 2>/dev/null \
+        || dnf config-manager --enable crb 2>/dev/null \
+        || echo "no crb repo on this base, continuing") \
+    && dnf -y install \
+         'dnf-command(builddep)' \
+         rpm-build \
+         rpmdevtools \
+         git-core \
+         curl \
+         ca-certificates \
+    && dnf clean all
+
+WORKDIR /work
