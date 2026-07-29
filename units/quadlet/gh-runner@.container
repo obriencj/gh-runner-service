@@ -36,6 +36,11 @@ Volume=%t/podman/podman.sock:/var/run/docker.sock
 
 Secret=gh-runner-token-%i,type=mount,target=/run/secrets/gh-token
 
+# Without this the container's output dies with it, since Quadlet passes --rm.
+# Diagnosing a crash-looping runner then means reproducing the podman run by
+# hand, which is not a thing to ask of anyone.
+LogDriver=journald
+
 Label=net.preoccupied.gh-runner.role=runner
 Label=net.preoccupied.gh-runner.id=%i
 

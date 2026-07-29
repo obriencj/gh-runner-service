@@ -194,6 +194,46 @@ TIMERS = (
 )
 
 
+def ensure_podman_socket() -> bool:
+    """
+    podman.socket must be enabled and running before any instance starts.
+
+    The mount source is /run/user/<uid>/podman/podman.sock. If the socket unit
+    has never run that path does not exist, and podman — asked to bind-mount a
+    missing source — creates a *directory* there. The container then finds a
+    directory at /var/run/docker.sock, and the failure reads "is not a socket"
+    rather than anything about podman.socket.
+
+    %post tries to enable it, but with `|| :`, so a failure there says nothing.
+    This is the converge step that has to actually hold.
+    """
+
+    changed = False
+    sock = Path(f"/run/user/{service_uid()}/podman/podman.sock")
+
+    # Podman's leftover directory keeps shadowing the real socket until it goes.
+    if sock.is_dir():
+        try:
+            sock.rmdir()
+            changed = True
+        except OSError as exc:
+            raise CtlError(
+                f"{sock} is a directory, not a socket — podman created it when "
+                f"the mount source was missing — and it could not be removed: "
+                f"{exc}"
+            ) from exc
+
+    if systemctl("is-enabled", "podman.socket", check=False).stdout.strip() != "enabled":
+        systemctl("enable", "podman.socket")
+        changed = True
+
+    if systemctl("is-active", "podman.socket", check=False).stdout.strip() != "active":
+        systemctl("start", "podman.socket")
+        changed = True
+
+    return changed
+
+
 def sync_timers() -> list[str]:
     """
     Enable the maintenance timers.

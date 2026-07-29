@@ -145,7 +145,10 @@ def cmd_enable(args) -> int:
         )
     if not secret.secret_exists(inst.iid):
         secret.sync(inst.iid)
-    # Before the unit starts: podman refuses to create a bind-mount source.
+    # Both before the unit starts. podman refuses to create a bind-mount
+    # source, and a missing podman.socket leaves it creating a directory where
+    # the socket belongs.
+    units.ensure_podman_socket()
     state.ensure(inst)
     drain.clear(inst)
     units.sync_dropin(inst)
@@ -212,6 +215,9 @@ def cmd_sync(args) -> int:
 
     for name in units.migrate_wants():
         changed.append(f"moved {name} into {units.WANTS_DIR}")
+
+    if units.ensure_podman_socket():
+        changed.append("podman.socket")
 
     for name in units.sync_timers():
         changed.append(f"enabled {name}")
