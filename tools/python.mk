@@ -27,7 +27,10 @@ $(DISTDIR)/.wheel-stamp: pyproject.toml $(shell find src -name '*.py' 2>/dev/nul
 venv: $(VENV)/.stamp ## Create the dev/test environment
 
 $(VENV)/.stamp: pyproject.toml
-	$(UV) venv --python $(PYTHON) $(VENV)
+	@# --clear, because uv refuses an existing venv outright. The stamp only
+	@# fires when pyproject.toml changed, which is exactly when a clean
+	@# rebuild is what we want.
+	$(UV) venv --clear --python $(PYTHON) $(VENV)
 	VIRTUAL_ENV=$(VENV) $(UV) pip install --quiet -e '.[test]'
 	@touch $@
 
