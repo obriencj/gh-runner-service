@@ -61,7 +61,7 @@ help: ## Show this help
 all: wheel ## Build the local wheel (the spec does not use this)
 
 .PHONY: check
-check: check-version check-help check-python check-shim check-units check-spec ## Run the full test suite
+check: check-version check-help check-python check-shim check-units check-shipped check-spec ## Run the full test suite
 
 .PHONY: clean
 clean: ## Remove build output

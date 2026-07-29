@@ -35,6 +35,23 @@ rpm: dist sources ## Build the binary RPM
 
 # One shell, not two: each recipe line gets its own shell, so an `exit 0`
 # guard on the first line does not stop the second from running.
+# Catches "added a file, forgot the spec", which otherwise surfaces only as
+# `File not found:` after a full container build has already run %prep and
+# unpacked 644MB. Cheap here, expensive there.
+.PHONY: check-shipped
+check-shipped: ## Assert every shipped file is named in the spec
+	@rc=0; \
+	for f in units/user/* units/quadlet/* container/context/* config/*; do \
+	    [ -f "$$f" ] || continue; \
+	    n=$$(basename "$$f"); \
+	    if grep -q -- "$$n" $(SPEC); then \
+	        echo "  ok  $$n"; \
+	    else \
+	        echo "  MISSING from $(SPEC): $$f" >&2; rc=1; \
+	    fi; \
+	done; \
+	exit $$rc
+
 .PHONY: check-spec
 check-spec: ## Lint the spec, and verify it parses
 	@if command -v rpmspec >/dev/null; then \

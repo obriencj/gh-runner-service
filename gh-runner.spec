@@ -72,7 +72,7 @@
 
 Name:           gh-runner
 Version:        0.1.0
-Release:        8%{?dist}
+Release:        9%{?dist}
 Summary:        Rootless, ephemeral GitHub Actions self-hosted runners
 
 # Our own files are GPLv3; the bundled upstream runner is MIT.
@@ -190,7 +190,7 @@ install -m0644 units/quadlet/gh-runner.build \
 # generated drop-ins. Note these are NOT Quadlet types: a .service or .timer
 # placed in the Quadlet directory is silently ignored.
 install -d -m0755 %{buildroot}%{_userunitdir}
-install -m0644 units/user/*.service units/user/*.timer \
+install -m0644 units/user/*.service units/user/*.timer units/user/*.target \
     %{buildroot}%{_userunitdir}/
 
 # Configuration.
