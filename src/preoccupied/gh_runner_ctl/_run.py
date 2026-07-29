@@ -74,11 +74,18 @@ def run(argv: list[str],
     """
 
     cmd = as_service_user(argv) if user else argv
+
+    # cwd matters. runuser drops privileges but inherits the caller's working
+    # directory, and an operator invoking this from root's shell leaves it at
+    # /root — which the service account cannot enter, so every command dies
+    # with "cannot chdir to /root: Permission denied" before it starts. / is
+    # the one directory guaranteed traversable by everyone.
     proc = subprocess.run(
         cmd,
         input=stdin,
         capture_output=True,
         text=True,
+        cwd="/",
     )
     if check and proc.returncode != 0:
         raise CtlError(
