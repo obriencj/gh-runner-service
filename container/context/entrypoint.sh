@@ -70,10 +70,30 @@ mkdir -p "${WORK}/_temp" "${WORK}/_actions" "${WORK}/_tool"
 # 5. Preflight. Fail here, loudly, rather than sixty seconds later inside a
 #    job step where it surfaces as an inscrutable `docker: command failed` in
 #    a workflow log the operator may not be able to see.
+#    Show what is actually there rather than asserting a cause. `[[ ! -S ]]`
+#    is equally false for a missing path, a directory, and a socket whose
+#    stat() was denied by SELinux — an earlier version blamed podman.socket
+#    unconditionally and sent the operator after the wrong thing twice.
 if [[ ! -S "$SOCK" ]]; then
-    log "FATAL: ${SOCK} is not a socket."
-    log "The host's podman.socket is probably not running. On the host:"
-    log "  systemctl --user enable --now podman.socket"
+    log "FATAL: ${SOCK} is not a usable socket."
+    log "what is actually at that path, from inside the container:"
+    ls -ldZ "$SOCK" >&2 2>/dev/null || ls -ld "$SOCK" >&2 2>/dev/null \
+        || log "  (nothing — the path does not exist or cannot be stat'ed)"
+    stat -c '  type=%F mode=%A owner=%U:%G' "$SOCK" >&2 2>/dev/null || true
+    log "the mount source on the host is \$XDG_RUNTIME_DIR/podman/podman.sock;"
+    log "the three things that produce this:"
+    log "  missing    - podman.socket not running; podman then creates a"
+    log "               DIRECTORY at the source, which shows as type=directory"
+    log "  directory  - that leftover; remove it on the host, restart the socket"
+    log "  denied     - socket exists on the host but SELinux denies stat here;"
+    log "               check for AVCs and see design §10 on labelling"
+    exit 1
+fi
+
+if [[ ! -w "$SOCK" ]]; then
+    log "FATAL: ${SOCK} is a socket but not writable by this container."
+    ls -ldZ "$SOCK" >&2 2>/dev/null || ls -ld "$SOCK" >&2 2>/dev/null || true
+    log "Usually SELinux. Check the host for an AVC denial naming this socket."
     exit 1
 fi
 
