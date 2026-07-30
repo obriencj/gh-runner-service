@@ -72,7 +72,7 @@
 
 Name:           gh-runner
 Version:        0.1.0
-Release:        15%{?dist}
+Release:        16%{?dist}
 Summary:        Rootless, ephemeral GitHub Actions self-hosted runners
 
 # Our own files are GPLv3; the bundled upstream runner is MIT.
@@ -133,18 +133,20 @@ echo '%{runner_sha256}  %{SOURCE1}' | sha256sum -c -
 mkdir -p %{runner_tree}
 tar -xzf %{SOURCE1} -C %{runner_tree}
 
-# Excluded outright rather than merely unused — see design §4. Upstream no
-# longer ships a top-level svc.sh; the rootful-service machinery is now the
-# templates plus runsvc.sh under bin/, and those are what have to go.
-rm -f %{runner_tree}/bin/installdependencies.sh
-rm -f %{runner_tree}/bin/runsvc.sh
-rm -f %{runner_tree}/bin/systemd.svc.sh.template
-rm -f %{runner_tree}/bin/actions.runner.service.template
-rm -f %{runner_tree}/bin/RunnerService.js
-# macOS service machinery, irrelevant on this platform.
-rm -f %{runner_tree}/bin/darwin.svc.sh.template
-rm -f %{runner_tree}/bin/actions.runner.plist.template
-rm -f %{runner_tree}/bin/macos-run-invoker.js
+# Nothing is removed from the upstream tree.
+#
+# An earlier version deleted the service templates and runsvc.sh as "rootful
+# service machinery we must never run", and config.sh then failed outright:
+#
+#     Could not find file '/var/lib/gh-runner/01/bin/systemd.svc.sh.template'
+#
+# config.sh reads them unconditionally, even with --unattended --ephemeral.
+# Excluding files from a vendored tree whose loading order we do not control
+# buys nothing -- we simply never invoke svc.sh -- and costs a build cycle to
+# discover. Same reasoning as §4.1 on shipping all four bundled node runtimes.
+#
+# installdependencies.sh stays too. It does not know EL10 and must never be
+# run, but the deps are baked into the image and nothing invokes it.
 
 %patch -P 0 -p1 -d %{runner_tree}
 
@@ -213,7 +215,13 @@ install -d -m0700 %{buildroot}%{_sharedstatedir}/%{name}
 # its own root, which is incompatible with RPM ownership.
 install -d -m0755 %{buildroot}%{_prefix}/lib/%{name}
 cp -a %{runner_tree} %{buildroot}%{_prefix}/lib/%{name}/%{runner_version}
-echo '%{runner_version}' > \
+# Version-release, not just the runner version. entrypoint.sh re-syncs the
+# tree into an instance's state directory when this marker differs, so a
+# marker of %{runner_version} alone means a package that changes *what* it
+# ships for a given upstream version never triggers a re-sync -- exactly the
+# trap hit by un-excluding the files above, where the fixed RPM installed
+# cleanly and every instance kept running the old tree.
+echo '%{runner_version}-%{version}-%{release}' > \
     %{buildroot}%{_prefix}/lib/%{name}/%{runner_version}/.version
 ln -sfn %{runner_version} %{buildroot}%{_prefix}/lib/%{name}/current
 

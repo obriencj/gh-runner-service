@@ -254,17 +254,32 @@ and a parallel make target would be a second source of truth that nothing
 verifies. `uv` is a local development convenience only and has no part in the
 package build.
 
-**Excludes** (removed in `%prep`, so they cannot be run by accident):
+**Nothing is excluded.** An earlier version of this section removed the
+service templates, `runsvc.sh`, and the macOS equivalents as "rootful service
+machinery that must never run here". `config.sh` then failed outright:
 
-| File | Reason |
-|---|---|
-| `bin/installdependencies.sh` | Does not know EL10; deps are baked into the image. |
-| `bin/runsvc.sh`, `bin/systemd.svc.sh.template`, `bin/actions.runner.service.template`, `bin/RunnerService.js` | The rootful system-unit machinery. Actively wrong here. |
-| `bin/darwin.svc.sh.template`, `bin/actions.runner.plist.template`, `bin/macos-run-invoker.js` | macOS service machinery, irrelevant on this platform. |
+```
+Could not find file '/var/lib/gh-runner/01/bin/systemd.svc.sh.template'
+```
 
-Note there is no top-level `svc.sh` in current upstream — it was replaced by
-the templates above. An exclude list naming files that no longer exist is a
-`rm -f` that quietly does nothing, so this table is checked on each pin move.
+It reads those templates unconditionally, even under `--unattended
+--ephemeral`. Deleting files from a vendored tree whose internal loading order
+we do not control buys nothing — we simply never invoke `svc.sh` — and costs a
+build-and-deploy cycle to discover. Same reasoning as §4.1 on shipping all four
+node runtimes: the deviation has to earn its place, and this one did not.
+
+`bin/installdependencies.sh` stays for the same reason. It does not know EL10
+and must never be run, but the image bakes its dependencies in and nothing
+invokes it.
+
+**The sync marker is version-release, not the upstream version.**
+`entrypoint.sh` re-syncs the tree into an instance's state directory when
+`/usr/lib/gh-runner/current/.version` differs from the instance's copy. A
+marker of `runner_version` alone means a package that changes *what* it ships
+for a given upstream version never triggers a re-sync — which is precisely the
+trap that un-excluding those files walked into: the corrected RPM installs
+cleanly and every existing instance keeps running the old tree. The marker is
+therefore `<runner_version>-<version>-<release>`, so any rebuild re-syncs.
 
 ### 4.1 What the bundle actually weighs
 
