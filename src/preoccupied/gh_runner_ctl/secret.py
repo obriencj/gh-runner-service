@@ -29,7 +29,7 @@ import stat
 from pathlib import Path
 
 from . import CREDENTIALS_DIR, SECRET_PREFIX, CtlError
-from ._run import podman, podman_json
+from ._run import podman
 
 
 _LABEL = "net.preoccupied.gh-runner.digest"
@@ -90,19 +90,27 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
-def _secrets() -> dict[str, str | None]:
+def _secret_names() -> list[str]:
     """
-    Every gh-runner secret podman knows about, mapped to its digest label
+    Names of our secrets.
+
+    A field template, not --format json. `podman secret ls` does not
+    special-case json on every version -- podman 5.8.2 treats it as a Go
+    template containing no actions and prints the literal word back, once per
+    secret:
+
+        `podman secret ls` produced no JSON.
+        stdout: 'json'
+
+    A field template renders the same on every version that has the field.
     """
 
-    out: dict[str, str | None] = {}
-    for entry in podman_json("secret", "ls"):
-        name = entry.get("Name") or ""
-        if not name.startswith(f"{SECRET_PREFIX}-"):
-            continue
-        labels = (entry.get("Spec") or {}).get("Labels") or entry.get("Labels") or {}
-        out[name] = labels.get(_LABEL)
-    return out
+    proc = podman("secret", "ls", "--format", "{{.Name}}", check=False)
+    if proc.returncode != 0:
+        return []
+
+    prefix = f"{SECRET_PREFIX}-"
+    return [n for n in proc.stdout.split() if n.startswith(prefix)]
 
 
 def _inspect(iid: str) -> tuple[bool, str | None]:
@@ -189,7 +197,7 @@ def prune_orphan_secrets(known: set[str]) -> list[str]:
 
     dropped = []
     wanted = {secret_name(iid) for iid in known}
-    for name in _secrets():
+    for name in _secret_names():
         if name not in wanted:
             podman("secret", "rm", name, check=False)
             dropped.append(name)
