@@ -58,6 +58,25 @@ def ensure(inst: Instance) -> bool:
     return not existed
 
 
+def jobs_run(inst: Instance) -> int:
+    """
+    How many jobs this instance has executed.
+
+    The runner writes one _diag/Worker_*.log per job. That is the only record
+    of *work done* as opposed to *restarts*, and the difference is the whole
+    question: an ephemeral runner restarts after every successful job, so a
+    restart count alone cannot tell a healthy loop from a crash loop.
+
+    Bounded by the prune timer's --diag-age, so this is jobs in the retention
+    window, not since installation.
+    """
+
+    diag = inst.state_dir / "_diag"
+    if not diag.is_dir():
+        return 0
+    return len(list(diag.glob("Worker_*.log")))
+
+
 def remove(inst: Instance) -> bool:
     d = inst.state_dir
     if not d.exists():

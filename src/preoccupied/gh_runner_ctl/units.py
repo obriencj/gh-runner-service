@@ -333,6 +333,8 @@ def state(inst: Instance) -> dict[str, str]:
         "--property=UnitFileState",
         "--property=SubState",
         "--property=NRestarts",
+        "--property=Result",
+        "--property=ExecMainStatus",
         check=False,
     )
     out: dict[str, str] = {}

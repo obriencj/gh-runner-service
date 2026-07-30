@@ -289,14 +289,77 @@ def _current_dropin(inst) -> str | None:
     return p.read_text() if p.exists() else None
 
 
+def _target(inst) -> str:
+    """
+    owner/repo, or the org, from RUNNER_URL.
+
+    The full URL is mostly boilerplate and the interesting part is the tail.
+    RUNNER_NAME alone does not disambiguate either: it defaults to
+    <hostname>-<id>, which is identical across every project on a host.
+    """
+
+    url = (inst.get("RUNNER_URL") or "").rstrip("/")
+    if not url:
+        return "-"
+    path = url.split("://", 1)[-1]
+    return path.split("/", 1)[1] if "/" in path else path
+
+
 def cmd_status(args) -> int:
-    for inst in conf.all_instances():
+    instances = conf.all_instances()
+    if not instances:
+        print("no instances configured")
+        return 0
+
+    rows = []
+    for inst in instances:
         st = units.state(inst)
-        print(
-            f"{inst.iid}: {st.get('ActiveState', '?')}/{st.get('SubState', '?')} "
-            f"restarts={st.get('NRestarts', '0')}"
-            + ("  [draining]" if drain.is_draining(inst) else "")
-        )
+        active = st.get("ActiveState", "?")
+        sub = st.get("SubState", "?")
+        restarts = int(st.get("NRestarts", "0") or 0)
+        jobs = state.jobs_run(inst)
+
+        if drain.is_draining(inst):
+            what = "draining"
+        elif active == "active":
+            what = "running"
+        elif sub == "auto-restart":
+            what = "restarting"
+        else:
+            what = active
+
+        # Result is systemd's verdict on the most recent invocation. An
+        # ephemeral runner exits 0 after each job, so success here means the
+        # last restart was a finished job rather than a failure.
+        result = st.get("Result", "")
+        code = st.get("ExecMainStatus", "0")
+        if result and result != "success":
+            last = f"{result}({code})"
+        else:
+            last = "ok"
+
+        # Every restart should correspond to a completed job. More restarts
+        # than jobs means something is exiting before it picks work up.
+        unexplained = restarts - jobs
+        note = "" if unexplained <= 0 else f"{unexplained} without a job"
+
+        rows.append((
+            inst.iid,
+            inst.get("RUNNER_NAME") or "-",
+            _target(inst),
+            what, str(restarts), str(jobs), last, note,
+        ))
+
+    head = ("ID", "NAME", "TARGET", "STATE", "RESTARTS", "JOBS", "LAST", "")
+    widths = [max(len(r[i]) for r in (*rows, head)) for i in range(8)]
+    print("  ".join(h.ljust(w) for h, w in zip(head, widths)).rstrip())
+    for r in rows:
+        print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
+
+    print()
+    print("An ephemeral runner restarts after every job it finishes, so")
+    print("restarts alone say nothing. RESTARTS in step with JOBS is the")
+    print("healthy loop; RESTARTS climbing while JOBS does not is a crash loop.")
     return 0
 
 
