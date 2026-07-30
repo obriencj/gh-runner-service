@@ -908,7 +908,14 @@ non-overlapping subuid/subgid block. Home is `/var/lib/gh-runner`.
 and denied. `/usr/lib/gh-runner` needs its own rule because it is `usr_t` by
 default and a container cannot read it.
 
-**Do not "fix" this with `:Z` on the volume.** It is the obvious move and it
+**The podman socket mount does need `:z`.** SELinux denies a `container_t`
+process access to the engine's own socket, and the failure surfaces as
+`Permission denied` on the socket path inside the container — which reads like a
+mount problem and is not one. `:z` relabels it `container_file_t:s0`, the same
+label the fcontext rule above gives the state directory, and podman reapplies it
+on every start so `podman.socket` recreating the socket is self-healing.
+
+**Do not "fix" the state mount with `:Z` on the volume.** It is the obvious move and it
 breaks the design: `:Z` relabels with the runner container's private MCS
 category, after which the *sibling* job containers — which have their own
 categories — cannot read `_work`, and every containerised job fails on a

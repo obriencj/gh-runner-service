@@ -32,7 +32,21 @@ Environment=RUNNER_ROOT=/var/lib/gh-runner/%i
 # MCS category and lock the sibling job containers out of _work.
 Volume=/var/lib/gh-runner/%i:/var/lib/gh-runner/%i
 Volume=/usr/lib/gh-runner/current:/usr/lib/gh-runner/current:ro
-Volume=%t/podman/podman.sock:/var/run/docker.sock
+# :z, because SELinux denies a container_t process access to the engine's own
+# socket, and it does not read like a label problem:
+#
+#     ls: cannot access '/var/run/docker.sock': Permission denied
+#
+# :z relabels the socket container_file_t:s0 — shared, no MCS categories —
+# which is exactly what §10's fcontext rule does statically for the instance
+# state directory. A process at s0:c439,c717 may access an object at s0
+# because the empty category set is a subset of any other, which is also why
+# :Z (private) must never appear on the state mount: it would give _work this
+# container's categories and lock the sibling job containers out.
+#
+# Podman reapplies this on every container start, so podman.socket recreating
+# the socket with its default label is self-healing rather than a trap.
+Volume=%t/podman/podman.sock:/var/run/docker.sock:z
 
 Secret=gh-runner-token-%i,type=mount,target=/run/secrets/gh-token
 
