@@ -32,21 +32,30 @@ Environment=RUNNER_ROOT=/var/lib/gh-runner/%i
 # MCS category and lock the sibling job containers out of _work.
 Volume=/var/lib/gh-runner/%i:/var/lib/gh-runner/%i
 Volume=/usr/lib/gh-runner/current:/usr/lib/gh-runner/current:ro
-# :z, because SELinux denies a container_t process access to the engine's own
-# socket, and it does not read like a label problem:
+Volume=%t/podman/podman.sock:/var/run/docker.sock
+
+# SELinux checks a unix socket twice, and only the first check is about the
+# socket. Both denials were hit here, in order:
 #
-#     ls: cannot access '/var/run/docker.sock': Permission denied
+#   1. the file.  container_t could not stat the socket at all:
+#        ls: cannot access '/var/run/docker.sock': Permission denied
+#      `:z` fixes that by relabelling it container_file_t:s0.
 #
-# :z relabels the socket container_file_t:s0 — shared, no MCS categories —
-# which is exactly what §10's fcontext rule does statically for the instance
-# state directory. A process at s0:c439,c717 may access an object at s0
-# because the empty category set is a subset of any other, which is also why
-# :Z (private) must never appear on the state mount: it would give _work this
-# container's categories and lock the sibling job containers out.
+#   2. connectto. Having reached the file, connect() still failed:
+#        dial unix /var/run/docker.sock: connect: permission denied
+#      unix_stream_socket connectto is checked against the *listening
+#      process's* label — podman itself — not the socket file's. Relabelling
+#      the socket cannot reach it. There is nothing to relabel.
 #
-# Podman reapplies this on every container start, so podman.socket recreating
-# the socket with its default label is self-healing rather than a trap.
-Volume=%t/podman/podman.sock:/var/run/docker.sock:z
+# Hence label confinement off rather than a label fix. It costs nothing that
+# is not already given away: this container holds the host Podman socket, so it
+# can create a container mounting / and do anything on the box. §1 says plainly
+# that it is not a security boundary and the VM is; SELinux confining a process
+# that can drive podman is theatre.
+#
+# Job containers are unaffected — created by the host engine as siblings, still
+# fully confined — which is why §10's _work fcontext rules still matter.
+SecurityLabelDisable=true
 
 Secret=gh-runner-token-%i,type=mount,target=/run/secrets/gh-token
 

@@ -908,12 +908,19 @@ non-overlapping subuid/subgid block. Home is `/var/lib/gh-runner`.
 and denied. `/usr/lib/gh-runner` needs its own rule because it is `usr_t` by
 default and a container cannot read it.
 
-**The podman socket mount does need `:z`.** SELinux denies a `container_t`
-process access to the engine's own socket, and the failure surfaces as
-`Permission denied` on the socket path inside the container — which reads like a
-mount problem and is not one. `:z` relabels it `container_file_t:s0`, the same
-label the fcontext rule above gives the state directory, and podman reapplies it
-on every start so `podman.socket` recreating the socket is self-healing.
+**The runner container runs with SELinux label confinement disabled**
+(`SecurityLabelDisable=true`), and relabelling is not an alternative. A unix
+socket is checked twice: the file, then `unix_stream_socket connectto` against
+the *listening process's* label. `:z` on the mount satisfies the first —
+`Permission denied` on `stat` becomes a readable socket — and cannot touch the
+second, because the peer is podman itself and there is no object to relabel.
+`connect()` still fails.
+
+This costs nothing that is not already given away: the runner holds the host
+Podman socket, so it can create a container mounting `/` regardless. §1 states
+that it is not a security boundary and the VM is. Job containers are
+unaffected — siblings created by the host engine, still fully confined — which
+is why the `_work` fcontext rules below still matter.
 
 **Do not "fix" the state mount with `:Z` on the volume.** It is the obvious move and it
 breaks the design: `:Z` relabels with the runner container's private MCS
