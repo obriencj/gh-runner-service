@@ -65,6 +65,6 @@ token=$(printf '%s' "$response" | jq -r '.token // empty')
 
 printf '%s' "$token"
 
-# TODO (M3): GitHub App support. openssl is in the image for exactly this —
+# TODO: GitHub App support. openssl is in the image for exactly this —
 # detect a PEM in $SECRET, sign a JWT, exchange it for an installation token,
 # then mint as above.

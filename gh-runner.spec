@@ -71,8 +71,8 @@
 %global _binary_payload w3.zstdio
 
 Name:           gh-runner
-Version:        0.1.0
-Release:        18%{?dist}
+Version:        1.0.0
+Release:        1%{?dist}
 Summary:        Rootless, ephemeral GitHub Actions self-hosted runners
 
 # Our own files are GPLv3; the bundled upstream runner is MIT.
@@ -374,5 +374,5 @@ exit 0
 
 
 %changelog
-* Wed Jul 29 2026 Christopher O'Brien <obriencj@gmail.com> - 0.1.0-1
-- Initial packaging skeleton against actions/runner 2.328.0
+* Thu Jul 30 2026 Christopher O'Brien <obriencj@gmail.com> - 1.0.0-1
+- Initial release

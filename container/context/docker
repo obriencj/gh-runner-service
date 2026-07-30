@@ -103,7 +103,7 @@ done
 
 # A global flag before the verb (docker --config /x network create ...) leaves
 # insert_at unset, so we pass through unmodified rather than guess. The runner
-# does not emit that form; if M0 shows otherwise, handle it explicitly.
+# has not been observed to emit that form.
 
 if (( insert_at < 0 )); then
     exec "$PODMAN" "${out[@]}"
@@ -139,8 +139,8 @@ fi
 
 exec "$PODMAN" "${out[@]:0:insert_at}" "${inject[@]}" "${out[@]:insert_at}"
 
-# NOTE for M0: the runner calls `docker version --format '{{.Server.APIVersion}}'`
-# at startup and parses the answer. Podman reports its own version rather than a
-# Docker API version like 1.41, and the runner may reject it. If M0 shows that it
-# does, intercept `version` here and answer in Docker's shape. Do not guess the
-# fix before the capture says it is needed.
+# The runner calls `docker version --format '{{.Server.APIVersion}}'` at startup
+# and parses the answer, and podman reports its own version rather than a Docker
+# API version like 1.41. That was expected to need intercepting here; it does
+# not. Containerised jobs run against Podman 5.8.2 with `version` passed
+# through untouched, so no interception is warranted.

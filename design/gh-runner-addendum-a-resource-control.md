@@ -4,7 +4,7 @@ Extension to the base design specification. Covers CPU, memory, and task limits
 for job containers and for the runner containers themselves.
 
 Status: draft
-Depends on: base spec §§5–10, implemented through M5
+Depends on: base spec §§5–10, as built in 1.0.0
 
 ---
 

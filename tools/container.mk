@@ -12,8 +12,11 @@ image-packages: ## Show what the image bakes in
 
 # The shim's argv rewriting is the highest-risk code in the project and is a
 # pure function of argv, so it is tested as one. The fixtures under
-# tests/shim/argv are captured from a live runner during M0 — do not invent
-# them, capture them.
+# tests/shim/argv are hand-written, and containerised jobs have since run
+# against them unchanged -- but they are still not a capture from a live
+# runner. Anything new the runner turns out to emit belongs here as a fixture
+# before it is handled.
+
 .PHONY: check-shim
 check-shim: ## Golden-file tests for the docker->podman-remote shim
 	@tests/shim/run.sh

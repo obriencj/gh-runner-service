@@ -410,7 +410,7 @@ def cmd_check_credential(args) -> int:
     # belongs here; it needs the same repo/org inference register.sh does.
     print()
     print("note: this verifies presence and readability, not that the token")
-    print("      can mint for its URL. That check lands with M3.")
+    print("      can mint for its URL. Minting is not yet implemented here.")
     return 1 if failed else 0
 
 
