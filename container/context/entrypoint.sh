@@ -107,9 +107,31 @@ log "engine ok: $(podman-remote version --format '{{.Server.Version}}' 2>/dev/nu
 # 6. Mint a registration token. Ephemeral runners re-register every start.
 TOKEN=$(/usr/local/bin/register.sh)
 
-# 7. Configure. --replace matters: an unclean exit leaves a registration
-#    behind, and without it the next start fails on a name collision and
-#    wedges the instance.
+# 7. Clear the local registration.
+#
+#    An ephemeral runner re-registers on every start, so a .runner written by
+#    the previous container is always stale. config.sh refuses rather than
+#    overwriting it:
+#
+#      Cannot configure the runner because it is already configured. To
+#      reconfigure the runner, run './config.sh remove' first.
+#
+#    --replace does not help here: it settles a *server-side* collision, where
+#    GitHub still lists a runner under this name, and never touches local
+#    state. Both halves are needed, and the state directory persists across
+#    container lifetimes by design (§5), so this is the common path rather
+#    than crash recovery.
+#
+#    `config.sh remove` is the sanctioned route and is wrong for us: it needs
+#    a removal token minted over the network to undo a registration that is
+#    about to be replaced anyway.
+rm -f "$RUNNER_ROOT"/.runner \
+      "$RUNNER_ROOT"/.credentials \
+      "$RUNNER_ROOT"/.credentials_rsaparams
+
+# 8. Configure. --replace settles the server side: an unclean exit leaves a
+#    registration behind, and without it the next start fails on a name
+#    collision and wedges the instance.
 cd "$RUNNER_ROOT"
 ./config.sh \
     --unattended \
@@ -123,7 +145,7 @@ cd "$RUNNER_ROOT"
     ${RUNNER_GROUP:+--runnergroup "$RUNNER_GROUP"} \
     --work "$WORK"
 
-# 8. One job, then exit. --rm destroys the container; Restart=always brings up
+# 9. One job, then exit. --rm destroys the container; Restart=always brings up
 #    a fresh one.
 log "registered as ${RUNNER_NAME}; waiting for a job"
 exec ./run.sh

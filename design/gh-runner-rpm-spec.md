@@ -879,8 +879,22 @@ Per container start, i.e. per job:
 9. Runner takes one job, exits. Quadlet's `--rm` destroys the container.
    `Restart=always` starts a fresh one.
 
-`--replace` matters: an unclean exit leaves a registration behind, and without
-it the next start fails on a name collision and wedges the instance.
+**Both halves of "already registered" need handling, and `--replace` is only
+one of them.** It settles the *server* side: GitHub still lists a runner under
+this name, and without it the next start fails on the collision and wedges the
+instance. It does nothing about *local* state, and `config.sh` refuses outright
+when it finds one:
+
+```
+Cannot configure the runner because it is already configured.
+```
+
+Since the state directory persists across container lifetimes by design (§5)
+and an ephemeral runner reconfigures on every start, a stale `.runner` is the
+common path rather than crash recovery. Step 7 removes `.runner`,
+`.credentials` and `.credentials_rsaparams` before configuring. `config.sh
+remove` is the sanctioned route and is wrong here — it wants a removal token
+minted over the network to undo a registration about to be replaced anyway.
 
 `RUNNER_NAME` defaults to `<hostname>-<id>`, which is unique per host and per
 instance. Two instances sharing a name would `--replace` each other on every
