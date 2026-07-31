@@ -71,7 +71,7 @@
 %global _binary_payload w3.zstdio
 
 Name:           gh-runner
-Version:        1.0.0
+Version:        1.1.0~dev
 Release:        1%{?dist}
 Summary:        Rootless, ephemeral GitHub Actions self-hosted runners
 
@@ -374,5 +374,8 @@ exit 0
 
 
 %changelog
+* Fri Jul 31 2026 Christopher O'Brien <obriencj@gmail.com> - 1.1.0~dev-1
+- Development build. Real Docker CLI and buildx against the podman socket.
+
 * Thu Jul 30 2026 Christopher O'Brien <obriencj@gmail.com> - 1.0.0-1
 - Initial release

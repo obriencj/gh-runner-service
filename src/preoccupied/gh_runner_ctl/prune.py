@@ -25,6 +25,10 @@ from ._run import podman, podman_json
 
 JOB_LABEL = "net.preoccupied.gh-runner.role=job"
 
+#: buildx names its buildkitd container buildx_buildkit_<builder><n>, and its
+#: cache volume the same with _state appended.
+BUILDX_PREFIX = "buildx_buildkit_"
+
 DEFAULT_MAX_AGE = "2h"
 DEFAULT_DIAG_AGE = "14d"
 
@@ -74,6 +78,63 @@ def stale_networks(max_age: int) -> list[str]:
         if age is None or age >= max_age:
             out.append(name)
     return out
+
+
+def _lines(*args: str) -> list[str]:
+    """
+    A field template rather than --format json.
+
+    `podman secret ls --format json` turned out to render "json" as a Go
+    template containing no actions and print the word back. Field templates
+    render the same on any version that has the field.
+    """
+
+    proc = podman(*args, check=False)
+    if proc.returncode != 0:
+        return []
+    return [ln for ln in proc.stdout.splitlines() if ln.strip()]
+
+
+def abandoned_buildx_containers() -> list[str]:
+    """
+    buildx's buildkitd containers, which our labels never reach.
+
+    buildx is a CLI plugin that speaks the API directly instead of shelling
+    out, so the container it creates does not pass through the shim: no
+    role=job label, no JOB_MEMORY_MAX, and positive selection cannot find it.
+    The name is all we have.
+
+    docker/build-push-action names its builder per job (builder-<uuid>), so a
+    job that dies before `buildx rm` leaks a container and its state volume --
+    and buildkit's own GC policy allows around 20GiB per builder, which makes
+    a handful of leaks a full disk rather than an annoyance.
+
+    Only *stopped* ones are reaped. buildx keeps buildkitd running while a
+    builder is in use, so a persistent builder kept for its cache is never
+    touched; a stopped one has been abandoned.
+    """
+
+    out = []
+    for line in _lines("ps", "-a", "--format", "{{.Names}}\t{{.State}}"):
+        name, _, state = line.partition("\t")
+        if not name.startswith(BUILDX_PREFIX):
+            continue
+        if state.strip().lower() in ("running", "paused", "created"):
+            continue
+        out.append(name)
+    return out
+
+
+def abandoned_buildx_volumes() -> list[str]:
+    """
+    Cache volumes whose builder is gone.
+
+    Not filtered by age: `podman volume rm` refuses a volume still in use, so
+    a live builder's cache is safe by construction rather than by our guess.
+    """
+
+    return [n for n in _lines("volume", "ls", "--format", "{{.Name}}")
+            if n.startswith(BUILDX_PREFIX)]
 
 
 def stale_diag(max_age: int) -> list[Path]:
@@ -129,6 +190,8 @@ durations:
         help=f"_diag files older than this (default {DEFAULT_DIAG_AGE})",
     )
     ap.add_argument("--images", action="store_true", help="also prune dangling images")
+    ap.add_argument("--no-buildx", action="store_true",
+                    help="leave abandoned buildx builders alone")
     ap.add_argument(
         "-n", "--dry-run", action="store_true", help="report without removing anything"
     )
@@ -157,10 +220,31 @@ durations:
             if not args.dry_run:
                 path.unlink(missing_ok=True)
 
+        buildx_c = [] if args.no_buildx else abandoned_buildx_containers()
+        for name in buildx_c:
+            print(f"buildx    {name}")
+            if not args.dry_run:
+                podman("rm", "-f", name, check=False)
+
+        # After the containers, so a volume freed by the removal above is
+        # collectable in the same pass rather than the next one.
+        buildx_v = []
+        if not args.no_buildx:
+            for name in abandoned_buildx_volumes():
+                if args.dry_run:
+                    buildx_v.append(name)
+                    continue
+                # rm refuses a volume in use, which is the safety check.
+                if podman("volume", "rm", name, check=False).returncode == 0:
+                    buildx_v.append(name)
+        for name in buildx_v:
+            print(f"buildx    volume {name}")
+
         if args.images and not args.dry_run:
             podman("image", "prune", "-f", check=False)
 
-        total = len(containers) + len(networks) + len(diags)
+        total = (len(containers) + len(networks) + len(diags)
+                 + len(buildx_c) + len(buildx_v))
         print(f"{'would reap' if args.dry_run else 'reaped'} {total} object(s)")
 
     except CtlError as exc:

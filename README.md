@@ -10,9 +10,13 @@ it `dnf install`, then one config file and one token per runner.
 
 Each runner takes exactly one job, then its container is destroyed and rebuilt
 from the image. Job containers are created by the *host* Podman as siblings of
-the runner, via a `docker`-to-`podman-remote` shim baked into the image — so
-workflows with a `container:` block work without the runner needing an engine
-of its own.
+the runner — so workflows with a `container:` block work without the runner
+needing an engine of its own.
+
+The image carries the real Docker CLI and `buildx`, pointed at the host's
+Podman socket through its Docker-compatible API. That means `docker` actions
+work as written, including `docker/build-push-action`, which needs buildx and
+which podman's own `buildx` stub cannot serve.
 
 ---
 

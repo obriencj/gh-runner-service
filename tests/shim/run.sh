@@ -50,7 +50,7 @@ for in_file in "$argvdir"/*.in; do
         RUNNER_ID=01
         [ -e "$env_file" ] && . "$env_file"
         export RUNNER_ID JOB_MEMORY_MAX JOB_CPUS GH_RUNNER_SHIM_DROP_SOCKET
-        GH_RUNNER_PODMAN="$stub" bash "$shim" $(cat "$in_file") 2>&1
+        GH_RUNNER_ENGINE="$stub" bash "$shim" $(cat "$in_file") 2>&1
     )"
 
     if [ "$got" == "$(cat "$expect_file")" ]; then

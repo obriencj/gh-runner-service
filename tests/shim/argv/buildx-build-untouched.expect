@@ -1,0 +1,10 @@
+buildx
+build
+--push
+--tag
+reg/img:v1
+--build-arg
+FOO=bar
+--file
+Containerfile
+.

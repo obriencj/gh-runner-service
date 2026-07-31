@@ -14,10 +14,21 @@ libssl3
 libkrb5-3
 zlib1g
 
-# --- the shim's engine client ---
-# Remote client only: there is no engine in this container. A full podman
+# --- engine clients ---
+# Clients only: there is no engine in this container. A full podman or dockerd
 # would give the runner a second, empty container store, and every job would
 # silently re-pull its images into a store the host never prunes.
+#
+# The Docker CLI is what the runner and most actions actually expect, and it
+# works against podman's socket because that socket serves a Docker-compatible
+# API. buildx is a Docker CLI plugin -- podman's `buildx` is a stub that
+# rejects `create --name`, which is what docker/build-push-action calls first.
+# From Docker's archive; see the Containerfile.
+docker-ce-cli
+docker-buildx-plugin
+
+# Kept as a second way to interrogate the engine when something is confusing,
+# and used by the entrypoint preflight.
 podman-remote
 
 # --- workflow basics ---

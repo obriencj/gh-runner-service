@@ -1,11 +1,11 @@
 #!/bin/bash
 #
-# docker -> podman-remote shim.
+# docker shim.
 #
 # The runner shells out to `docker` by name, and this is earlier on PATH than
-# anything else so called. There is no Podman engine in this container: we
-# talk to the *host* user's engine over the socket the Quadlet mounts at
-# /var/run/docker.sock.
+# the real client, so this runs first and then hands off to it. There is no
+# engine in this container: both clients talk to the *host* user's engine over
+# the socket the Quadlet mounts at /var/run/docker.sock.
 #
 # Three jobs, in order:
 #
@@ -19,18 +19,39 @@
 #      architecture with a job container's command line in hand — the runner
 #      unit's MemoryMax does not reach a sibling container. See design §7.2.
 #
-# Everything else passes through untouched. This is not a Docker emulator;
-# podman-remote already speaks the CLI.
+# Everything else passes through untouched, to the *real* Docker CLI. Podman's
+# socket serves a Docker-compatible API alongside its own, so the genuine
+# client works against it -- which is what makes `docker buildx` work, podman's
+# own buildx being a stub that rejects `create --name`.
 
 set -uo pipefail
 
 SOCK_PATH="${GH_RUNNER_SOCK_PATH:-/var/run/docker.sock}"
-PODMAN="${GH_RUNNER_PODMAN:-podman-remote}"
+
+# Absolute, and never resolved through PATH.
+#
+# This script IS /usr/local/bin/docker, and /usr/local/bin precedes /usr/bin,
+# so `exec docker` would re-invoke the shim forever. That failure presents as
+# the runner hanging or the box running out of processes -- nothing that names
+# this file -- so the path is hardcoded and checked below rather than trusted.
+ENGINE="${GH_RUNNER_ENGINE:-/usr/bin/docker}"
+
+case "$(readlink -f "$ENGINE" 2>/dev/null || echo "$ENGINE")" in
+    "$(readlink -f "$0" 2>/dev/null || echo "$0")")
+        echo "docker shim: GH_RUNNER_ENGINE points back at the shim ($ENGINE)." >&2
+        echo "That is an infinite loop. It must be the real client." >&2
+        exit 1
+        ;;
+esac
 
 # 1 = drop the socket mount (default). 0 = rewrite it, for a workflow that
 # genuinely needs socket access inside the job container.
 DROP_SOCKET="${GH_RUNNER_SHIM_DROP_SOCKET:-1}"
 
+# Two clients, two variables, one socket. The Docker CLI reads DOCKER_HOST and
+# podman-remote reads CONTAINER_HOST; defaulting both here means a hand-run
+# `docker` inside the container behaves exactly like one the runner invokes.
+export DOCKER_HOST="${DOCKER_HOST:-unix://${SOCK_PATH}}"
 export CONTAINER_HOST="${CONTAINER_HOST:-unix://${SOCK_PATH}}"
 
 # Subcommand groups whose real verb is the *second* positional.
@@ -106,7 +127,7 @@ done
 # has not been observed to emit that form.
 
 if (( insert_at < 0 )); then
-    exec "$PODMAN" "${out[@]}"
+    exec "$ENGINE" "${out[@]}"
 fi
 
 action="$verb"
@@ -134,13 +155,20 @@ case "$group:$action" in
 esac
 
 if (( ${#inject[@]} == 0 )); then
-    exec "$PODMAN" "${out[@]}"
+    exec "$ENGINE" "${out[@]}"
 fi
 
-exec "$PODMAN" "${out[@]:0:insert_at}" "${inject[@]}" "${out[@]:insert_at}"
+exec "$ENGINE" "${out[@]:0:insert_at}" "${inject[@]}" "${out[@]:insert_at}"
 
-# The runner calls `docker version --format '{{.Server.APIVersion}}'` at startup
-# and parses the answer, and podman reports its own version rather than a Docker
-# API version like 1.41. That was expected to need intercepting here; it does
-# not. Containerised jobs run against Podman 5.8.2 with `version` passed
-# through untouched, so no interception is warranted.
+# On `buildx`: nothing to do, and that is deliberate rather than incidental.
+# `buildx` is not in VERB_GROUPS, so it parses as a depth-1 verb whose action
+# is "buildx" -- matching neither create nor run -- and passes straight through
+# for the real CLI to dispatch to its plugin.
+#
+# Do not add it to VERB_GROUPS. `docker buildx build` would then receive
+# --label, and --label on a *build* labels the resulting image, quietly
+# stamping role=job onto everything you publish.
+#
+# Note also that buildx speaks to the API directly rather than shelling out, so
+# the buildkitd container it spawns never passes through here: no labels, no
+# JOB_MEMORY_MAX. gh-runner-prune matches those by name instead.

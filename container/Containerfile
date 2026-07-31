@@ -8,6 +8,25 @@ FROM docker.io/library/ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# Docker's own archive, for docker-ce-cli and docker-buildx-plugin. Ubuntu's
+# docker.io is daemon-plus-CLI with no clean CLI-only split, and we want the
+# client alone -- there is still no engine in this container.
+#
+# This is the only non-Ubuntu source here, and it is a deliberate one: buildx
+# is a Docker CLI plugin, so actions like docker/build-push-action cannot work
+# without it. Podman's `buildx` is a stub that rejects `create --name`.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && install -m0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+         -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && . /etc/os-release \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]" \
+            "https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && rm -rf /var/lib/apt/lists/*
+
 # Everything the runner or a workflow could need, baked in. See
 # context/packages.list — the manifest is the thing you edit.
 COPY context/packages.list /tmp/packages.list
@@ -21,8 +40,15 @@ RUN apt-get update \
 # measuring the wrong thing. One env var, no patch, no rebase cost.
 ENV RUNNER_ALLOW_RUNASROOT=1
 
-# There is no engine here. podman-remote drives the *host* engine over the
-# socket the quadlet mounts at /var/run/docker.sock.
+# There is no engine here — only clients, both pointed at the *host* engine
+# over the socket the quadlet mounts at /var/run/docker.sock. Podman's socket
+# serves a Docker-compatible API alongside its own, so the real Docker CLI
+# works against it; that is what makes buildx possible.
+#
+# Two variables because they are two clients: the Docker CLI reads DOCKER_HOST,
+# podman-remote reads CONTAINER_HOST. podman-remote is kept as a second way to
+# interrogate the engine when something is confusing.
+ENV DOCKER_HOST=unix:///var/run/docker.sock
 ENV CONTAINER_HOST=unix:///var/run/docker.sock
 
 # The shim. The runner still emits `-v /var/run/docker.sock:...` from compiled

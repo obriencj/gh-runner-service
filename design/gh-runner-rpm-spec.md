@@ -3,7 +3,7 @@
 RPM-packaged, rootless-Podman, ephemeral GitHub Actions self-hosted runners on
 AlmaLinux 10.
 
-Status: as built — 1.0.0, running on AlmaLinux 10
+Status: as built — 1.0.0 released; 1.1.0~dev in development
 Target platform: AlmaLinux 10 (EL10), Podman 5.x, systemd 257+
 
 The problem this exists to solve: standing up an Actions runner on an EL
@@ -63,7 +63,8 @@ host (AlmaLinux 10, VM)
 │   │        │
 │   │        └── runner emits `docker create …`
 │   │              └── shim: drop sock mount, add job limits, label
-│   │                    └── podman-remote ──► host podman ◄── podman.socket
+│   │                    └── docker CLI ──────► host podman ◄── podman.socket
+│   │                        (+ buildx)         (Docker-compat API)
 │   │                                                      │
 │   └── job containers ◄──────────────── SIBLINGS, not children
 │       (created by host podman, in the same store)
@@ -75,8 +76,11 @@ host (AlmaLinux 10, VM)
 
 The engine the shim talks to is the **host** user's Podman, reached over the
 mounted `podman.sock`. There is no engine inside the runner container — only
-`podman-remote` (§6). `podman.socket` is therefore a hard runtime dependency of
-every instance, not an implementation detail (§8, §10).
+clients: the real Docker CLI with its `buildx` plugin, and `podman-remote`
+alongside it (§6.1). Podman's socket serves a Docker-compatible API, which is
+what lets the genuine Docker client drive it. `podman.socket` is therefore a
+hard runtime dependency of every instance, not an implementation detail
+(§8, §10).
 
 **Key consequence:** job containers are siblings of the runner container,
 created by host Podman. The runner *believes* it is nesting; it is not.
@@ -396,6 +400,25 @@ FROM docker.io/library/ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# Docker's own archive, for docker-ce-cli and docker-buildx-plugin. Ubuntu's
+# docker.io is daemon-plus-CLI with no clean CLI-only split, and we want the
+# client alone -- there is still no engine in this container.
+#
+# This is the only non-Ubuntu source here, and it is a deliberate one: buildx
+# is a Docker CLI plugin, so actions like docker/build-push-action cannot work
+# without it. Podman's `buildx` is a stub that rejects `create --name`.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && install -m0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+         -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && . /etc/os-release \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]" \
+            "https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && rm -rf /var/lib/apt/lists/*
+
 # Everything the runner or a workflow could need, baked in. See
 # context/packages.list — the manifest is the thing you edit.
 COPY context/packages.list /tmp/packages.list
@@ -409,8 +432,15 @@ RUN apt-get update \
 # measuring the wrong thing. One env var, no patch, no rebase cost.
 ENV RUNNER_ALLOW_RUNASROOT=1
 
-# There is no engine here. podman-remote drives the *host* engine over the
-# socket the quadlet mounts at /var/run/docker.sock.
+# There is no engine here — only clients, both pointed at the *host* engine
+# over the socket the quadlet mounts at /var/run/docker.sock. Podman's socket
+# serves a Docker-compatible API alongside its own, so the real Docker CLI
+# works against it; that is what makes buildx possible.
+#
+# Two variables because they are two clients: the Docker CLI reads DOCKER_HOST,
+# podman-remote reads CONTAINER_HOST. podman-remote is kept as a second way to
+# interrogate the engine when something is confusing.
+ENV DOCKER_HOST=unix:///var/run/docker.sock
 ENV CONTAINER_HOST=unix:///var/run/docker.sock
 
 # The shim. The runner still emits `-v /var/run/docker.sock:...` from compiled
@@ -433,12 +463,47 @@ now ours, inside the container, version-controlled in the package. The host
 keeps no global symlink and no mount namespace hack. This is strictly better
 than either host-side workaround.
 
-**There is no Podman engine inside the runner container.** The shim execs
-`podman-remote`, which connects to the host user's engine via `CONTAINER_HOST`
-pointed at the socket the Quadlet mounts to `/var/run/docker.sock`. Installing
-a full `podman` in the image would give the runner a second, empty container
-store and every job would silently re-pull its images into a store the host
-never prunes. Remote client, one store, one engine.
+### 6.1 The client is the real Docker CLI
+
+The shim hands off to `/usr/bin/docker`, not to `podman-remote`. Podman's
+socket serves a **Docker-compatible API** alongside its own, so the genuine
+client works against it — the Docker CLI negotiates down (`API version 1.44`)
+and talks to Podman 5.8.2 without complaint.
+
+This exists because `buildx` is a Docker CLI *plugin*, and podman's `buildx` is
+a stub that rejects `create --name` — so `docker/build-push-action` fails at its
+first call. With the real client, `buildx create --driver docker-container`
+bootstraps a genuine buildkitd container through the compat API and builds
+work.
+
+Two consequences worth holding onto:
+
+**buildx never passes through the shim.** It speaks the API directly rather
+than shelling out, so the buildkitd container it spawns carries no `role=job`
+label and no `JOB_MEMORY_MAX`. `gh-runner-prune` matches those by name
+(`buildx_buildkit_*`) instead — the reap-by-exclusion pattern §8 otherwise
+argues against, accepted here because there is no label to select on and
+buildkit's own GC allows around 20GiB per builder.
+
+**BuildKit's cache is not Podman's.** `cache-from: type=gha` cannot work
+(no Actions cache backend), and the host's persistent image store does *not*
+substitute for it: buildkit keeps its cache inside the builder's state volume.
+With `docker/build-push-action` naming a fresh `builder-<uuid>` per job, that
+cache is created and destroyed every time. A fixed builder name, or
+`type=local` pointed under `_work/_tool` (which persists per §5.1), restores it.
+
+**There is no engine inside the runner container** — only clients. The shim
+execs the Docker CLI, and `podman-remote` is kept as a second way to interrogate
+the engine; both connect via
+`DOCKER_HOST` and `CONTAINER_HOST` respectively, both pointed at the socket the
+Quadlet mounts to `/var/run/docker.sock`. Installing a full `podman` or a
+`dockerd` would give the runner a second, empty container store, and every job
+would silently re-pull its images into a store the host never prunes. Clients
+only, one store, one engine.
+
+The Docker CLI comes from Docker's own archive, since Ubuntu ships no clean
+CLI-only package — the sole non-Ubuntu source in this image, and a deliberate
+one.
 
 Ubuntu 24.04 does package `podman-remote` separately, and its client talks to
 the host's Podman 5.8.2 without complaint — the version-skew concern that
@@ -457,7 +522,10 @@ Shim behaviour, in order:
 3. On `create` / `run`, inject `--memory=$JOB_MEMORY_MAX` and
    `--cpus=$JOB_CPUS` when those are set (§7). This is the only point at which
    a job container's resources can be constrained; see §7.2.
-4. `exec podman-remote "$@"` with the remainder.
+4. `exec /usr/bin/docker` with the remainder — by absolute path. The shim
+   *is* `/usr/local/bin/docker` and `/usr/local/bin` precedes `/usr/bin`, so
+   resolving through `PATH` would re-invoke it forever, and that failure
+   presents as a hang rather than as anything naming the shim.
 
 `openssl` is present because GitHub App authentication (§11) requires signing a
 JWT, and `curl` plus `jq` cannot do that alone. It is a few hundred kilobytes

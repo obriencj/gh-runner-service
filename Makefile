@@ -72,20 +72,15 @@ clean: ## Remove build output
 
 .PHONY: check-version
 check-version: ## Assert the spec and the Python package agree on the version
-	@pkg=$$($(PYTHON) -c "import sys; sys.path.insert(0, 'src'); \
-	        import preoccupied.gh_runner_ctl as m; print(m.__version__)"); \
-	if [ "$$pkg" != "$(VERSION)" ]; then \
-	    echo "version drift: $(SPEC) says $(VERSION), package says $$pkg" >&2; \
-	    echo "run: make bump-version V=<x.y.z>" >&2; \
-	    exit 1; \
-	fi; \
-	echo "version ok: $(VERSION)"
+	@$(PYTHON) tools/check-version.py $(SPEC)
 
 .PHONY: bump-version
 bump-version: ## Set our package version in both places (V=x.y.z)
 	@test -n "$(V)" || { echo "usage: make bump-version V=x.y.z" >&2; exit 1; }
 	sed -i.bak -E 's/^Version:([ \t]+).*/Version:\1$(V)/' $(SPEC) && rm -f $(SPEC).bak
-	sed -i.bak -E 's/^__version__ = ".*"/__version__ = "$(V)"/' \
+	@# The Python package never carries the RPM's pre-release marker: ~ is
+	@# not valid PEP 440, and the package has no need to express it.
+	sed -i.bak -E 's/^__version__ = ".*"/__version__ = "$(firstword $(subst ~, ,$(V)))"/' \
 	    src/preoccupied/gh_runner_ctl/__init__.py && \
 	    rm -f src/preoccupied/gh_runner_ctl/__init__.py.bak
 	@echo "bumped to $(V); add a %changelog entry before building"
