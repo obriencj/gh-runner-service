@@ -70,8 +70,20 @@
 # package for a build that finishes.
 %global _binary_payload w3.zstdio
 
+# --- our version -------------------------------------------------------------
+# Split, because a pre-release qualifier must reach Version: and must NOT reach
+# any path. `~` sorts below the base version, which is exactly what we want for
+# an upgrade, and exactly what we do not want in a tarball name, a %%setup
+# directory, or the wheel's dist-info -- the Python package has no qualifier and
+# never will, `~` not being valid PEP 440.
+#
+# At release, delete the version_qualifier line. Everything else follows.
+%global base_version      1.1.0
+%global version_qualifier ~dev
+# ----------------------------------------------------------------------------
+
 Name:           gh-runner
-Version:        1.1.0~dev
+Version:        %{base_version}%{?version_qualifier}
 Release:        1%{?dist}
 Summary:        Rootless, ephemeral GitHub Actions self-hosted runners
 
@@ -81,7 +93,7 @@ URL:            https://github.com/obriencj/gh-runner-service
 
 # Source0 is this project. Source1 is the upstream runner release bundle,
 # verified against runner_sha256 in %%prep and extracted, never repacked.
-Source0:        %{name}-%{version}.tar.gz
+Source0:        %{name}-%{base_version}.tar.gz
 Source1:        https://github.com/actions/runner/releases/download/v%{runner_version}/actions-runner-linux-%{runner_arch}-%{runner_version}.tar.gz
 
 # Applied to the extracted runner tree, not to this project.
@@ -126,7 +138,7 @@ The VM is the boundary. Do not attach these runners to public repositories.
 # Verify before extracting. We ship no repacked tarball and no vendored tree.
 echo '%{runner_sha256}  %{SOURCE1}' | sha256sum -c -
 
-%setup -q -n %{name}-%{version}
+%setup -q -n %{name}-%{base_version}
 
 # The upstream runner unpacks into a subdirectory of our own source tree. It
 # is a payload we install pristine, not something we build.
@@ -345,7 +357,7 @@ exit 0
 # Shared with other packages in the namespace — do not ship an __init__.py.
 %dir %{python3_sitelib}/preoccupied
 %{python3_sitelib}/preoccupied/gh_runner_ctl/
-%{python3_sitelib}/preoccupied.gh_runner_ctl-%{version}.dist-info/
+%{python3_sitelib}/preoccupied.gh_runner_ctl-%{base_version}.dist-info/
 
 %dir %{_datadir}/%{name}
 %{_datadir}/%{name}/Containerfile

@@ -209,3 +209,26 @@ make upgrade-runner V=2.337.0
 dry-runs the patch set against the new tarball — refusing to move the pin if a
 patch no longer applies. Every patch is a standing rebase obligation, and this
 is the cheapest place to discover one has come due.
+
+### Our own version
+
+The spec splits the version from its pre-release qualifier, because they have
+different jobs:
+
+```
+%global base_version      1.1.0
+%global version_qualifier ~dev      # absent for a release
+Version:                  %{base_version}%{?version_qualifier}
+```
+
+`~` sorts *below* the base, so a development build upgrades cleanly to
+`1.1.0-1`. It must never reach a path, though — not the source tarball, not the
+`%setup` directory, and not the wheel's `dist-info`, which carries the Python
+package's version and can have no qualifier at all since `~` is not valid PEP
+440. So everything path-shaped uses `%{base_version}`.
+
+```bash
+make bump-version V=1.2.0    # base version, spec and Python together
+make qualifier Q=~rc1        # set the qualifier
+make qualifier Q=            # clear it: this is a release
+```

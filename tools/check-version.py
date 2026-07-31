@@ -19,11 +19,25 @@ import sys
 from pathlib import Path
 
 
-def rpm_version(spec: Path) -> str:
+def rpm_version(spec: Path) -> tuple[str, str]:
+    """
+    (base, qualifier) read from the %global lines.
+
+    Not from `Version:` — that is `%{base_version}%{?version_qualifier}` and
+    reading it without expanding macros gets the literal text.
+    """
+
+    base = qualifier = ""
     for line in spec.read_text().splitlines():
-        if line.startswith("Version:"):
-            return line.split(None, 1)[1].strip()
-    raise SystemExit(f"no Version: in {spec}")
+        parts = line.split()
+        if len(parts) >= 3 and parts[0] == "%global":
+            if parts[1] == "base_version":
+                base = parts[2]
+            elif parts[1] == "version_qualifier":
+                qualifier = parts[2]
+    if not base:
+        raise SystemExit(f"no %global base_version in {spec}")
+    return base, qualifier
 
 
 def python_version(init: Path) -> str:
@@ -37,27 +51,31 @@ def main() -> int:
     spec = Path(sys.argv[1] if len(sys.argv) > 1 else "gh-runner.spec")
     init = Path("src/preoccupied/gh_runner_ctl/__init__.py")
 
-    rpm = rpm_version(spec)
+    base, qualifier = rpm_version(spec)
     have = python_version(init)
 
-    if "^" in rpm:
-        print(f"{rpm}: ^ marks a snapshot after a release, which this project "
-              f"does not use. For a pre-release use ~.", file=sys.stderr)
+    if qualifier.startswith("^"):
+        print(f"{qualifier}: ^ marks a snapshot after a release, which this "
+              f"project does not use. For a pre-release use ~.", file=sys.stderr)
         return 1
 
-    base, _, pre = rpm.partition("~")
+    if qualifier and not qualifier.startswith("~"):
+        print(f"version_qualifier {qualifier!r} does not start with ~, so it "
+              f"would sort ABOVE {base} rather than below it.", file=sys.stderr)
+        return 1
 
     if have != base:
         print("version drift:", file=sys.stderr)
-        print(f"  {spec} says  {rpm}", file=sys.stderr)
-        print(f"  package says {have}", file=sys.stderr)
-        print(f"  expected     {base}", file=sys.stderr)
+        print(f"  {spec} base_version  {base}", file=sys.stderr)
+        print(f"  package __version__  {have}", file=sys.stderr)
+        print(f"run: make bump-version V={base}", file=sys.stderr)
         return 1
 
-    if pre:
-        print(f"version ok: {rpm} (pre-release, sorts below {base})")
+    if qualifier:
+        print(f"version ok: {base}{qualifier} "
+              f"(pre-release, sorts below {base}; paths use {base})")
     else:
-        print(f"version ok: {rpm}")
+        print(f"version ok: {base}")
     return 0
 
 

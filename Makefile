@@ -31,13 +31,18 @@ RPMTOP        := $(CURDIR)/$(BUILDDIR)/rpm
 RUNNER_VERSION := $(shell awk '/^%global[ \t]+runner_version/ {print $$3}' $(SPEC))
 RUNNER_SHA256  := $(shell awk '/^%global[ \t]+runner_sha256/  {print $$3}' $(SPEC))
 RUNNER_ARCH    := $(shell awk '/^%global[ \t]+runner_arch/    {print $$3}' $(SPEC))
-VERSION        := $(shell awk '/^Version:/ {print $$2}' $(SPEC))
+# base_version, not Version: -- the latter is now a macro expression and awk
+# would hand back its literal text. VERSION is what appears in paths;
+# FULLVERSION is what rpm builds and what a human should see.
+VERSION        := $(shell awk '/^%global[ \t]+base_version/ {print $$3}' $(SPEC))
+QUALIFIER      := $(shell awk '/^%global[ \t]+version_qualifier/ {print $$3}' $(SPEC))
+FULLVERSION    := $(VERSION)$(QUALIFIER)
 
 RUNNER_TARBALL := actions-runner-linux-$(RUNNER_ARCH)-$(RUNNER_VERSION).tar.gz
 RUNNER_URL     := https://github.com/actions/runner/releases/download/v$(RUNNER_VERSION)/$(RUNNER_TARBALL)
 
 export NAME SPEC PYTHON PODMAN UV DESTDIR PREFIX SYSCONFDIR LOCALSTATEDIR
-export BUILDDIR DISTDIR RPMTOP VERSION
+export BUILDDIR DISTDIR RPMTOP VERSION QUALIFIER FULLVERSION
 export RUNNER_VERSION RUNNER_SHA256 RUNNER_ARCH RUNNER_TARBALL RUNNER_URL
 
 .DEFAULT_GOAL := help
@@ -52,7 +57,7 @@ include tools/oci.mk
 
 .PHONY: help
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"; printf "\n\033[1m%s\033[0m\n", "gh-runner $(VERSION) (runner pin $(RUNNER_VERSION))"} \
+	@awk 'BEGIN {FS = ":.*##"; printf "\n\033[1m%s\033[0m\n", "gh-runner $(FULLVERSION) (runner pin $(RUNNER_VERSION))"} \
 	     /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 } \
 	     /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
 	@echo
@@ -77,13 +82,26 @@ check-version: ## Assert the spec and the Python package agree on the version
 .PHONY: bump-version
 bump-version: ## Set our package version in both places (V=x.y.z)
 	@test -n "$(V)" || { echo "usage: make bump-version V=x.y.z" >&2; exit 1; }
-	sed -i.bak -E 's/^Version:([ \t]+).*/Version:\1$(V)/' $(SPEC) && rm -f $(SPEC).bak
-	@# The Python package never carries the RPM's pre-release marker: ~ is
-	@# not valid PEP 440, and the package has no need to express it.
-	sed -i.bak -E 's/^__version__ = ".*"/__version__ = "$(firstword $(subst ~, ,$(V)))"/' \
+	sed -i.bak -E 's/^(%global[ \t]+base_version[ \t]+).*/\1$(V)/' $(SPEC) && rm -f $(SPEC).bak
+	sed -i.bak -E 's/^__version__ = ".*"/__version__ = "$(V)"/' \
 	    src/preoccupied/gh_runner_ctl/__init__.py && \
 	    rm -f src/preoccupied/gh_runner_ctl/__init__.py.bak
-	@echo "bumped to $(V); add a %changelog entry before building"
+	@echo "bumped to $(V)$(QUALIFIER); add a %changelog entry before building"
+
+.PHONY: qualifier
+qualifier: ## Set or clear the pre-release qualifier (Q=~dev, or Q= to release)
+	@if [ -n "$(Q)" ]; then \
+	    if grep -q '^%global[ \t]*version_qualifier' $(SPEC); then \
+	        sed -i.bak -E 's/^(%global[ \t]+version_qualifier[ \t]+).*/\1$(Q)/' $(SPEC); \
+	    else \
+	        sed -i.bak -E 's/^(%global[ \t]+base_version[ \t]+.*)$$/\1\n%global version_qualifier $(Q)/' $(SPEC); \
+	    fi; \
+	    rm -f $(SPEC).bak; \
+	    echo "qualifier set: $(VERSION)$(Q)"; \
+	else \
+	    sed -i.bak -E '/^%global[ \t]+version_qualifier/d' $(SPEC) && rm -f $(SPEC).bak; \
+	    echo "qualifier cleared: $(VERSION) is now a release"; \
+	fi
 
 
 # The end.

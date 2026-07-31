@@ -19,7 +19,10 @@ RPM_TARGET=${RPM_TARGET:-}
 
 SPEC="$SRC/$SPEC_NAME"
 NAME=$(awk '/^Name:/ {print $2}' "$SPEC")
-VERSION=$(awk '/^Version:/ {print $2}' "$SPEC")
+# base_version, not Version:. Version: is a macro expression now, and this is
+# the name the tarball and its prefix must carry -- a `~` has no business in a
+# path.
+VERSION=$(awk '/^%global[ \t]+base_version/ {print $3}' "$SPEC")
 RUNNER_VERSION=$(awk '/^%global[ \t]+runner_version/ {print $3}' "$SPEC")
 RUNNER_ARCH=$(awk '/^%global[ \t]+runner_arch/ {print $3}' "$SPEC")
 
