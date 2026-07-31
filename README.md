@@ -227,8 +227,6 @@ Version:                  %{base_version}%{?version_qualifier}
 package's version and can have no qualifier at all since `~` is not valid PEP
 440. So everything path-shaped uses `%{base_version}`.
 
-```bash
-make bump-version V=1.2.0    # base version, spec and Python together
-make qualifier Q=~rc1        # set the qualifier
-make qualifier Q=            # clear it: this is a release
-```
+`make bump-version V=1.2.0` moves the base version in the spec and the Python
+package together. The qualifier is edited by hand: set it to `~rc1`, or null it
+to `%{nil}` (or delete the line) for a release.

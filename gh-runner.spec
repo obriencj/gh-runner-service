@@ -77,7 +77,8 @@
 # directory, or the wheel's dist-info -- the Python package has no qualifier and
 # never will, `~` not being valid PEP 440.
 #
-# At release, delete the version_qualifier line. Everything else follows.
+# At release, null version_qualifier to %%{nil} or delete the line. Either
+# works, and everything else follows from it.
 %global base_version      1.1.0
 %global version_qualifier ~dev
 # ----------------------------------------------------------------------------

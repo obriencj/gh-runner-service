@@ -35,7 +35,9 @@ RUNNER_ARCH    := $(shell awk '/^%global[ \t]+runner_arch/    {print $$3}' $(SPE
 # would hand back its literal text. VERSION is what appears in paths;
 # FULLVERSION is what rpm builds and what a human should see.
 VERSION        := $(shell awk '/^%global[ \t]+base_version/ {print $$3}' $(SPEC))
-QUALIFIER      := $(shell awk '/^%global[ \t]+version_qualifier/ {print $$3}' $(SPEC))
+# %{nil} counts as absent. Nulling the macro is as valid a way to make a
+# release as deleting the line, and a reader should not care which was used.
+QUALIFIER      := $(shell awk '/^%global[ \t]+version_qualifier/ { if ($$3 != "%{nil}") print $$3 }' $(SPEC))
 FULLVERSION    := $(VERSION)$(QUALIFIER)
 
 RUNNER_TARBALL := actions-runner-linux-$(RUNNER_ARCH)-$(RUNNER_VERSION).tar.gz
@@ -87,21 +89,6 @@ bump-version: ## Set our package version in both places (V=x.y.z)
 	    src/preoccupied/gh_runner_ctl/__init__.py && \
 	    rm -f src/preoccupied/gh_runner_ctl/__init__.py.bak
 	@echo "bumped to $(V)$(QUALIFIER); add a %changelog entry before building"
-
-.PHONY: qualifier
-qualifier: ## Set or clear the pre-release qualifier (Q=~dev, or Q= to release)
-	@if [ -n "$(Q)" ]; then \
-	    if grep -q '^%global[ \t]*version_qualifier' $(SPEC); then \
-	        sed -i.bak -E 's/^(%global[ \t]+version_qualifier[ \t]+).*/\1$(Q)/' $(SPEC); \
-	    else \
-	        sed -i.bak -E 's/^(%global[ \t]+base_version[ \t]+.*)$$/\1\n%global version_qualifier $(Q)/' $(SPEC); \
-	    fi; \
-	    rm -f $(SPEC).bak; \
-	    echo "qualifier set: $(VERSION)$(Q)"; \
-	else \
-	    sed -i.bak -E '/^%global[ \t]+version_qualifier/d' $(SPEC) && rm -f $(SPEC).bak; \
-	    echo "qualifier cleared: $(VERSION) is now a release"; \
-	fi
 
 
 # The end.

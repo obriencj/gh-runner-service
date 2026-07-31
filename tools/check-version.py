@@ -34,7 +34,9 @@ def rpm_version(spec: Path) -> tuple[str, str]:
             if parts[1] == "base_version":
                 base = parts[2]
             elif parts[1] == "version_qualifier":
-                qualifier = parts[2]
+                # %{nil} is how you null the macro without removing the line.
+                # Either spelling means "this is a release".
+                qualifier = "" if parts[2] == "%{nil}" else parts[2]
     if not base:
         raise SystemExit(f"no %global base_version in {spec}")
     return base, qualifier
